@@ -1,0 +1,12 @@
+{
+    "name":"github.com/gsrpc/gorpc",
+
+    "domain":"golang",
+
+    "import" : [
+        {"name" : "github.com/gsdocker/gsos","version":"v2.0"},
+        {"name" : "github.com/gsdocker/gserrors","version":"v2.0"},
+        {"name" : "github.com/gsdocker/gsconfig","version":"v2.0"},
+        {"name" : "github.com/gsdocker/gslogger","version":"v2.0"}
+    ]
+}
