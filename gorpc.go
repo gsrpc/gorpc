@@ -46,8 +46,8 @@ func ReadSByte(reader Reader) (int8, error) {
 	return int8(v), err
 }
 
-//ReadUint16 read uint16 from Reader interface
-func ReadUint16(reader Reader) (uint16, error) {
+//ReadUInt16 read uint16 from Reader interface
+func ReadUInt16(reader Reader) (uint16, error) {
 	buf := make([]byte, 2)
 
 	_, err := reader.Read(buf)
@@ -61,7 +61,7 @@ func ReadUint16(reader Reader) (uint16, error) {
 
 //ReadInt16 read uint16 from Reader interface
 func ReadInt16(reader Reader) (int16, error) {
-	v, err := ReadUint16(reader)
+	v, err := ReadUInt16(reader)
 
 	return int16(v), err
 }
@@ -133,7 +133,7 @@ func ReadFloat64(reader Reader) (float64, error) {
 
 //ReadString read string
 func ReadString(reader Reader) (string, error) {
-	len, err := ReadUint16(reader)
+	len, err := ReadUInt16(reader)
 
 	if err != nil {
 		return "", gserrors.Newf(err, "read string len error")
@@ -190,8 +190,8 @@ func WriteSByte(writer Writer, v int8) error {
 	return writer.WriteByte(byte(v))
 }
 
-//WriteUint16 write a little-endian uint16 into a writer stream
-func WriteUint16(writer Writer, v uint16) error {
+//WriteUInt16 write a little-endian uint16 into a writer stream
+func WriteUInt16(writer Writer, v uint16) error {
 	if err := WriteByte(writer, byte(v)); err != nil {
 		return err
 	}
@@ -286,7 +286,7 @@ func WriteFloat64(writer Writer, n float64) error {
 
 //WriteString write string into stream
 func WriteString(writer Writer, v string) error {
-	err := WriteUint16(writer, uint16(len(v)))
+	err := WriteUInt16(writer, uint16(len(v)))
 	if err != nil {
 		return err
 	}
