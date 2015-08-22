@@ -15,6 +15,10 @@
     "properties":{
         "gsrpc":{
             "test":["github.com/gsrpc/gsrpc/test/test.gs"]
-        }
+        },
+
+        "gsmake.golang.test" :[
+           {"dir":"./test","flags":"-bench . -cpu 4"}
+        ]
     }
 }
