@@ -152,96 +152,59 @@ func WriteRequest(writer Writer, val *Request) (err error) {
 	return nil
 }
 
-//Device -- generate by gsc
-type Device struct {
-	ID string
+//OSType type define -- generate by gsc
+type OSType byte
 
-	Type string
+//enum OSType constants -- generate by gsc
+const (
+	OSTypeWindows OSType = 0
 
-	Arch ArchType
+	OSTypeLinux OSType = 1
 
-	OS OSType
+	OSTypeOSX OSType = 2
 
-	OSVersion string
+	OSTypeWP OSType = 3
+
+	OSTypeAndroid OSType = 4
+
+	OSTypeIOS OSType = 5
+)
+
+//WriteOSType write enum to output stream
+func WriteOSType(writer Writer, val OSType) error {
+	return WriteByte(writer, byte(val))
 }
 
-//NewDevice create new struct object with default field val -- generate by gsc
-func NewDevice() *Device {
-	return &Device{
-
-		ID: "",
-
-		Type: "",
-
-		Arch: ArchTypeX86,
-
-		OS: OSTypeWindows,
-
-		OSVersion: "",
-	}
+//ReadOSType write enum to output stream
+func ReadOSType(reader Reader) (OSType, error) {
+	val, err := ReadByte(reader)
+	return OSType(val), err
 }
 
-//ReadDevice read Device from input stream -- generate by gsc
-func ReadDevice(reader Reader) (target *Device, err error) {
-	target = NewDevice()
+//String implement Stringer interface
+func (val OSType) String() string {
+	switch val {
 
-	target.ID, err = ReadString(reader)
-	if err != nil {
-		return
+	case 0:
+		return "enum(OSType.Windows)"
+
+	case 1:
+		return "enum(OSType.Linux)"
+
+	case 2:
+		return "enum(OSType.OSX)"
+
+	case 3:
+		return "enum(OSType.WP)"
+
+	case 4:
+		return "enum(OSType.Android)"
+
+	case 5:
+		return "enum(OSType.IOS)"
+
 	}
-
-	target.Type, err = ReadString(reader)
-	if err != nil {
-		return
-	}
-
-	target.Arch, err = ReadArchType(reader)
-	if err != nil {
-		return
-	}
-
-	target.OS, err = ReadOSType(reader)
-	if err != nil {
-		return
-	}
-
-	target.OSVersion, err = ReadString(reader)
-	if err != nil {
-		return
-	}
-
-	return
-}
-
-//WriteDevice write Device to output stream -- generate by gsc
-func WriteDevice(writer Writer, val *Device) (err error) {
-
-	err = WriteString(writer, val.ID)
-	if err != nil {
-		return
-	}
-
-	err = WriteString(writer, val.Type)
-	if err != nil {
-		return
-	}
-
-	err = WriteArchType(writer, val.Arch)
-	if err != nil {
-		return
-	}
-
-	err = WriteOSType(writer, val.OS)
-	if err != nil {
-		return
-	}
-
-	err = WriteString(writer, val.OSVersion)
-	if err != nil {
-		return
-	}
-
-	return nil
+	return fmt.Sprintf("enum(Unknown(%d))", val)
 }
 
 //WhoAmI -- generate by gsc
@@ -312,46 +275,6 @@ func WriteWhoAmI(writer Writer, val *WhoAmI) (err error) {
 	}
 
 	return nil
-}
-
-//ArchType type define -- generate by gsc
-type ArchType byte
-
-//enum ArchType constants -- generate by gsc
-const (
-	ArchTypeX86 ArchType = 0
-
-	ArchTypeX64 ArchType = 1
-
-	ArchTypeARM ArchType = 2
-)
-
-//WriteArchType write enum to output stream
-func WriteArchType(writer Writer, val ArchType) error {
-	return WriteByte(writer, byte(val))
-}
-
-//ReadArchType write enum to output stream
-func ReadArchType(reader Reader) (ArchType, error) {
-	val, err := ReadByte(reader)
-	return ArchType(val), err
-}
-
-//String implement Stringer interface
-func (val ArchType) String() string {
-	switch val {
-
-	case 0:
-		return "enum(ArchType.X86)"
-
-	case 1:
-		return "enum(ArchType.X64)"
-
-	case 2:
-		return "enum(ArchType.ARM)"
-
-	}
-	return fmt.Sprintf("enum(Unknown(%d))", val)
 }
 
 //Code type define -- generate by gsc
@@ -633,57 +556,134 @@ func WriteResponse(writer Writer, val *Response) (err error) {
 	return nil
 }
 
-//OSType type define -- generate by gsc
-type OSType byte
+//ArchType type define -- generate by gsc
+type ArchType byte
 
-//enum OSType constants -- generate by gsc
+//enum ArchType constants -- generate by gsc
 const (
-	OSTypeWindows OSType = 0
+	ArchTypeX86 ArchType = 0
 
-	OSTypeLinux OSType = 1
+	ArchTypeX64 ArchType = 1
 
-	OSTypeOSX OSType = 2
-
-	OSTypeWP OSType = 3
-
-	OSTypeAndroid OSType = 4
-
-	OSTypeIOS OSType = 5
+	ArchTypeARM ArchType = 2
 )
 
-//WriteOSType write enum to output stream
-func WriteOSType(writer Writer, val OSType) error {
+//WriteArchType write enum to output stream
+func WriteArchType(writer Writer, val ArchType) error {
 	return WriteByte(writer, byte(val))
 }
 
-//ReadOSType write enum to output stream
-func ReadOSType(reader Reader) (OSType, error) {
+//ReadArchType write enum to output stream
+func ReadArchType(reader Reader) (ArchType, error) {
 	val, err := ReadByte(reader)
-	return OSType(val), err
+	return ArchType(val), err
 }
 
 //String implement Stringer interface
-func (val OSType) String() string {
+func (val ArchType) String() string {
 	switch val {
 
 	case 0:
-		return "enum(OSType.Windows)"
+		return "enum(ArchType.X86)"
 
 	case 1:
-		return "enum(OSType.Linux)"
+		return "enum(ArchType.X64)"
 
 	case 2:
-		return "enum(OSType.OSX)"
-
-	case 3:
-		return "enum(OSType.WP)"
-
-	case 4:
-		return "enum(OSType.Android)"
-
-	case 5:
-		return "enum(OSType.IOS)"
+		return "enum(ArchType.ARM)"
 
 	}
 	return fmt.Sprintf("enum(Unknown(%d))", val)
+}
+
+//Device -- generate by gsc
+type Device struct {
+	ID string
+
+	Type string
+
+	Arch ArchType
+
+	OS OSType
+
+	OSVersion string
+}
+
+//NewDevice create new struct object with default field val -- generate by gsc
+func NewDevice() *Device {
+	return &Device{
+
+		ID: "",
+
+		Type: "",
+
+		Arch: ArchTypeX86,
+
+		OS: OSTypeWindows,
+
+		OSVersion: "",
+	}
+}
+
+//ReadDevice read Device from input stream -- generate by gsc
+func ReadDevice(reader Reader) (target *Device, err error) {
+	target = NewDevice()
+
+	target.ID, err = ReadString(reader)
+	if err != nil {
+		return
+	}
+
+	target.Type, err = ReadString(reader)
+	if err != nil {
+		return
+	}
+
+	target.Arch, err = ReadArchType(reader)
+	if err != nil {
+		return
+	}
+
+	target.OS, err = ReadOSType(reader)
+	if err != nil {
+		return
+	}
+
+	target.OSVersion, err = ReadString(reader)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+//WriteDevice write Device to output stream -- generate by gsc
+func WriteDevice(writer Writer, val *Device) (err error) {
+
+	err = WriteString(writer, val.ID)
+	if err != nil {
+		return
+	}
+
+	err = WriteString(writer, val.Type)
+	if err != nil {
+		return
+	}
+
+	err = WriteArchType(writer, val.Arch)
+	if err != nil {
+		return
+	}
+
+	err = WriteOSType(writer, val.OS)
+	if err != nil {
+		return
+	}
+
+	err = WriteString(writer, val.OSVersion)
+	if err != nil {
+		return
+	}
+
+	return nil
 }
