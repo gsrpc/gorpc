@@ -2,6 +2,7 @@ package gorpc
 
 import (
 	"bytes"
+	"fmt"
 	"sync"
 	"time"
 
@@ -10,28 +11,39 @@ import (
 	"github.com/gsdocker/gslogger"
 )
 
+// Sink .
+type Sink interface {
+	Close()
+	Disconnect()
+}
+
 // Router rpc router
 type Router interface {
+	fmt.Stringer
+
+	StateChanged(state State)
+	// Send send a request
 	Send(call *Request) (Future, error)
-
+	// SendMessage process send message
 	SendMessage(message *Message)
-
+	// RecvMessage process receive message
 	RecvMessage(message *Message)
-
+	// HandlerStateChanged handle fire event for state changed
+	HandlerStateChanged(state State, handler Handler)
 	// HandlerSend direct recv message with handler
 	HandlerSend(message *Message, handler Handler)
 	// HandlerRecv direct send message with handler
 	HandlerRecv(message *Message, handler Handler)
 	// SendQ get send Q
-	SendQ() <-chan *Message
-	// RecvQ get recv Q
-	RecvQ() chan<- *Message
+	SendQ() (*Message, bool)
 	// Register register dispatcher
 	Register(dispatcher Dispatcher)
 	// Unregister unregister dispatcher
 	Unregister(dispatcher Dispatcher)
 	// Close router
 	Close()
+	// Disconnect channel
+	Disconnect()
 }
 
 type _Promise struct {
@@ -85,15 +97,17 @@ type RouterBuilder struct {
 
 // _Router .
 type _Router struct {
-	gslogger.Log                         // Mixin Log APIs
-	sync.RWMutex                         // mutex
-	*RouterBuilder                       // mixin builder
-	seqID          uint16                // sequence id
-	dispatchers    map[uint16]Dispatcher // register dispatchers
-	handlers       []Handler             // register handlers
-	sendQ          chan *Message         // message sendsendQ
-	recvQ          chan *Message         // message sendsendQ
-	promises       map[uint16]*_Promise  // rpc promise
+	gslogger.Log                       // Mixin Log APIs
+	sync.RWMutex                       // mutex
+	name         string                // name
+	timeout      time.Duration         // timeout
+	seqID        uint16                // sequence id
+	dispatchers  map[uint16]Dispatcher // register dispatchers
+	handlers     []Handler             // register handlers
+	sendQ        chan *Message         // message sendsendQ
+	recvQ        chan *Message         // message sendsendQ
+	promises     map[uint16]*_Promise  // rpc promise
+	sink         Sink                  // sink
 
 }
 
@@ -127,15 +141,18 @@ func (builder *RouterBuilder) Handler(f HandlerF) *RouterBuilder {
 }
 
 // Create .
-func (builder *RouterBuilder) Create() Router {
+func (builder *RouterBuilder) Create(sink Sink) Router {
 
 	router := &_Router{
 		Log:         gslogger.Get("router"),
+		name:        builder.name,
+		timeout:     builder.timeout,
 		handlers:    builder.handlers.Create(),
 		sendQ:       make(chan *Message, builder.cachedsize),
 		recvQ:       make(chan *Message, builder.cachedsize),
 		dispatchers: make(map[uint16]Dispatcher),
 		promises:    make(map[uint16]*_Promise),
+		sink:        sink,
 	}
 
 	go router.dispatchLoop()
@@ -143,13 +160,31 @@ func (builder *RouterBuilder) Create() Router {
 	return router
 }
 
-func (router *_Router) Close() {
-	router.Lock()
-	defer router.Unlock()
-
-	for _, handler := range router.handlers {
-		handler.HandleClose(router)
+func (router *_Router) Disconnect() {
+	if router.sink != nil {
+		go router.sink.Close()
 	}
+}
+
+func (router *_Router) String() string {
+	return router.name
+}
+
+func (router *_Router) Close() {
+
+	if router.sink != nil {
+		go router.sink.Close()
+	}
+
+	go func() {
+		router.Lock()
+		defer router.Unlock()
+
+		for _, handler := range router.handlers {
+			handler.HandleClose(router)
+		}
+	}()
+
 }
 
 // Promise .
@@ -177,8 +212,23 @@ func (router *_Router) Promise() (Promise, uint16) {
 	}
 }
 
+// StateChanged .
+func (router *_Router) StateChanged(state State) {
+	go func() {
+		router.Lock()
+		defer router.Unlock()
+
+		for _, handler := range router.handlers {
+			if !handler.HandleStateChanged(router, state) {
+				return
+			}
+		}
+	}()
+}
+
 // Send .
 func (router *_Router) Send(call *Request) (Future, error) {
+
 	promise, id := router.Promise()
 
 	call.ID = id
@@ -194,6 +244,8 @@ func (router *_Router) Send(call *Request) (Future, error) {
 
 	message := NewMessage()
 
+	message.Code = CodeRequest
+
 	message.Content = buff.Bytes()
 
 	router.SendMessage(message)
@@ -203,107 +255,134 @@ func (router *_Router) Send(call *Request) (Future, error) {
 
 // SendMessage .
 func (router *_Router) SendMessage(message *Message) {
-	var err error
-
-	message, err = router.handleWrite(message)
-
-	if err != nil {
-
-		router.handleSendError(err)
-
-		return
-	}
-
-	if message == nil {
-		return
-	}
 
 	select {
 	case router.sendQ <- message:
 	default:
-		router.handleSendError(gserrors.Newf(ErrOverflow, "[%] sendQ overflow", router.name))
+		go router.handleSendError(gserrors.Newf(ErrOverflow, "[%] sendQ overflow", router.name))
 	}
 }
 
 func (router *_Router) RecvMessage(message *Message) {
-	var err error
-
-	message, err = router.handleRead(message)
-
-	if err != nil {
-
-		router.handleSendError(err)
-
-		return
-	}
-
-	if message == nil {
-		return
-	}
 
 	select {
 	case router.recvQ <- message:
 	default:
-		router.handleRecvError(gserrors.Newf(ErrOverflow, "[%] sendQ overflow", router.name))
+		go router.handleRecvError(gserrors.Newf(ErrOverflow, "[%] sendQ overflow", router.name))
 	}
+}
+
+// HandlerStateChanged .
+func (router *_Router) HandlerStateChanged(state State, handler Handler) {
+	go func() {
+		router.Lock()
+		defer router.Unlock()
+
+		processing := false
+
+		for _, current := range router.handlers {
+
+			if current == handler {
+				processing = true
+				continue
+			}
+
+			if processing {
+				if !current.HandleStateChanged(router, state) {
+					return
+				}
+			}
+		}
+	}()
 }
 
 // HandlerSend .
 func (router *_Router) HandlerSend(message *Message, handler Handler) {
 
-	router.Lock()
-	defer router.Unlock()
+	go func() {
+		router.Lock()
+		defer router.Unlock()
 
-	processing := false
+		processing := false
 
-	var err error
+		var err error
 
-	for i := len(router.handlers); i > 0; i-- {
+		for i := len(router.handlers); i > 0; i-- {
 
-		current := router.handlers[i-1]
+			current := router.handlers[i-1]
 
-		if current == handler {
-			processing = true
-		}
+			if current == handler {
+				processing = true
+				continue
+			}
 
-		if processing {
-			message, err = current.HandleSend(router, message)
+			if processing {
+				message, err = current.HandleSend(router, message)
 
-			if err != nil {
-				go router.handleSendError(err)
+				if err != nil {
+					go router.handleSendError(err)
 
-				return
+					return
+				}
 			}
 		}
-	}
+
+		if message == nil {
+			return
+		}
+
+		select {
+		case router.sendQ <- message:
+		default:
+			err := gserrors.Newf(ErrOverflow, "[%] sendQ overflow", router.name)
+			router.E(err.Error())
+			router.handleSendError(err)
+		}
+
+	}()
 
 }
 
 // HandlerRecv .
 func (router *_Router) HandlerRecv(message *Message, handler Handler) {
-	router.Lock()
-	defer router.Unlock()
 
-	processing := false
+	go func() {
+		router.Lock()
+		defer router.Unlock()
 
-	var err error
+		processing := false
 
-	for _, current := range router.handlers {
+		var err error
 
-		if current == handler {
-			processing = true
-		}
+		for _, current := range router.handlers {
 
-		if processing {
-			message, err = current.HandleSend(router, message)
+			if current == handler {
+				processing = true
+				continue
+			}
 
-			if err != nil {
-				go router.handleSendError(err)
+			if processing {
+				message, err = current.HandleSend(router, message)
 
-				return
+				if err != nil {
+					go router.handleSendError(err)
+
+					return
+				}
 			}
 		}
-	}
+
+		if message == nil {
+			return
+		}
+
+		select {
+		case router.recvQ <- message:
+		default:
+			router.handleRecvError(gserrors.Newf(ErrOverflow, "[%] sendQ overflow", router.name))
+		}
+	}()
+
 }
 
 // Register .
@@ -325,13 +404,29 @@ func (router *_Router) Unregister(dispatcher Dispatcher) {
 }
 
 // SendQ .
-func (router *_Router) SendQ() <-chan *Message {
-	return router.sendQ
-}
+func (router *_Router) SendQ() (message *Message, ok bool) {
 
-// RecvQ .
-func (router *_Router) RecvQ() chan<- *Message {
-	return router.recvQ
+	for {
+		message, ok = <-router.sendQ
+
+		if !ok {
+			return nil, ok
+		}
+
+		message, err := router.handleWrite(message)
+
+		if err != nil {
+			router.handleSendError(err)
+			continue
+		}
+
+		if message == nil {
+			continue
+		}
+
+		return message, ok
+	}
+
 }
 
 func (router *_Router) handleRecvError(err error) {
@@ -463,6 +558,7 @@ func (router *_Router) dispatchLoop() {
 
 		if err != nil {
 			router.E("handle received message(%d) error\n%s", code, err)
+			router.handleSendError(err)
 			continue
 		}
 

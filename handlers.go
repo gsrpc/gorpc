@@ -2,6 +2,7 @@ package gorpc
 
 // Handler gorpc handler
 type Handler interface {
+	HandleStateChanged(router Router, state State) bool
 	HandleRecieved(router Router, message *Message) (*Message, error)
 	HandleSend(router Router, message *Message) (*Message, error)
 	HandleClose(router Router)

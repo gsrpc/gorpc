@@ -18,8 +18,8 @@
         },
 
         "gsmake.golang.test" :[
-           {"dir":"./test","flags":"-bench . "},
-            {"dir":"./channel","flags":"-bench . "}
+           {"dir":"./test","flags":"-bench . -cpu 4 "},
+            {"dir":"./net","flags":"-bench . -cpu 4 "}
         ]
     }
 }

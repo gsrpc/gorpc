@@ -1,4 +1,4 @@
-package channel
+package net
 
 import (
 	"net"
@@ -17,44 +17,50 @@ type TCPClient struct {
 	gorpc.Router               // Mixin Router
 	name         string        // client name
 	raddr        string        // remote service address
-	reconnect    bool          // reconnect flag
 	state        gorpc.State   // connect state maching
 	conn         net.Conn      // connection
 	retry        time.Duration // reconnect timeout
 }
 
 // NewTCPClient create new tcp client
-func NewTCPClient(raddr string, router gorpc.Router) *TCPClient {
-	return &TCPClient{
-		name:   raddr,
-		Log:    gslogger.Get("rpc-tcp-client"),
-		raddr:  raddr,
-		Router: router,
-		state:  gorpc.StateDisconnect,
+func NewTCPClient(raddr string, builder *gorpc.RouterBuilder) *TCPClient {
+	client := &TCPClient{
+		name:  raddr,
+		Log:   gslogger.Get("rpc-tcp-client"),
+		raddr: raddr,
+		state: gorpc.StateDisconnect,
 	}
+
+	client.Router = builder.Create(client)
+
+	return client
 }
 
 // Connect .
-func (client *TCPClient) Connect(retry time.Duration) {
+func (client *TCPClient) Connect(retry time.Duration) *TCPClient {
 	client.Lock()
 	defer client.Unlock()
 
 	if client.state != gorpc.StateDisconnect {
-		return
+		return client
 	}
 
 	client.retry = retry
 
 	client.state = gorpc.StateConnecting
 
+	client.Router.StateChanged(client.state)
+
 	go func() {
 		conn, err := net.Dial("tcp", client.raddr)
 
-		if err != nil && client.reconnect {
+		if err != nil {
 
 			client.Lock()
 			client.state = gorpc.StateDisconnect
 			client.Unlock()
+
+			client.Router.StateChanged(client.state)
 
 			client.E("connect server error\n%s", gserrors.New(err))
 
@@ -70,11 +76,28 @@ func (client *TCPClient) Connect(retry time.Duration) {
 		client.connected(conn)
 
 	}()
+
+	return client
 }
 
 // Close .
 func (client *TCPClient) Close() {
-	client.close(client.conn)
+
+	client.D("close client")
+
+	client.Disconnect()
+}
+
+// Disconnect .
+func (client *TCPClient) Disconnect() {
+	client.Lock()
+	defer client.Unlock()
+
+	if client.conn != nil {
+		client.conn.Close()
+	}
+
+	client.state = gorpc.StateDisconnect
 }
 
 func (client *TCPClient) close(conn net.Conn) {
@@ -89,11 +112,11 @@ func (client *TCPClient) close(conn net.Conn) {
 		return
 	}
 
-	go client.Router.Close()
-
 	client.state = gorpc.StateDisconnect
 
-	if client.reconnect {
+	client.Router.StateChanged(client.state)
+
+	if client.retry != 0 {
 		go client.Connect(client.retry)
 	}
 
@@ -108,12 +131,14 @@ func (client *TCPClient) connected(conn net.Conn) {
 		return
 	}
 
-	client.conn = conn
-
 	client.state = gorpc.StateConnected
+
+	client.conn = conn
 
 	go client.recvLoop(conn)
 	go client.sendLoop(conn)
+
+	client.Router.StateChanged(client.state)
 }
 
 func (client *TCPClient) recvLoop(conn net.Conn) {
@@ -137,7 +162,13 @@ func (client *TCPClient) sendLoop(conn net.Conn) {
 
 	stream := gorpc.NewStream(conn, conn)
 
-	for msg := range client.SendQ() {
+	for {
+
+		msg, ok := client.SendQ()
+
+		if !ok {
+			break
+		}
 
 		err := gorpc.WriteMessage(stream, msg)
 

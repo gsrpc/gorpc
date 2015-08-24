@@ -1,4 +1,4 @@
-package channel
+package net
 
 import (
 	"net"
@@ -140,12 +140,13 @@ type _TCPChannel struct {
 func (server *TCPServer) newChannel(conn net.Conn) {
 
 	channel := &_TCPChannel{
-		name:   server.name,
-		raddr:  conn.RemoteAddr().String(),
-		conn:   conn,
-		state:  gorpc.StateConnected,
-		Router: server.builder.Create(),
+		name:  server.name,
+		raddr: conn.RemoteAddr().String(),
+		conn:  conn,
+		state: gorpc.StateConnected,
 	}
+
+	channel.Router = server.builder.Create(channel)
 
 	server.RLock()
 	defer server.RUnlock()
@@ -153,6 +154,8 @@ func (server *TCPServer) newChannel(conn net.Conn) {
 	for _, dispatcher := range server.dispatchers {
 		channel.Register(dispatcher)
 	}
+
+	channel.Router.StateChanged(gorpc.StateConnected)
 
 	go channel.recvLoop(conn)
 
@@ -180,7 +183,13 @@ func (channel *_TCPChannel) sendLoop(conn net.Conn) {
 
 	stream := gorpc.NewStream(conn, conn)
 
-	for msg := range channel.SendQ() {
+	for {
+
+		msg, ok := channel.SendQ()
+
+		if !ok {
+			break
+		}
 
 		err := gorpc.WriteMessage(stream, msg)
 
@@ -197,7 +206,18 @@ func (channel *_TCPChannel) sendLoop(conn net.Conn) {
 }
 
 func (channel *_TCPChannel) Close() {
-	channel.close(channel.conn)
+	channel.Disconnect()
+}
+
+// Disconnect .
+func (channel *_TCPChannel) Disconnect() {
+
+	channel.Lock()
+	defer channel.Unlock()
+
+	if channel.conn != nil {
+		channel.conn.Close()
+	}
 }
 
 func (channel *_TCPChannel) close(conn net.Conn) {
@@ -213,5 +233,5 @@ func (channel *_TCPChannel) close(conn net.Conn) {
 		return
 	}
 
-	go channel.Router.Close()
+	channel.Router.StateChanged(gorpc.StateDisconnect)
 }
