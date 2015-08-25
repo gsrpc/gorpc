@@ -182,7 +182,15 @@ func (sink *_Sink) dispatchResponse(response *Response) {
 	sink.W("unhandle response(%d)(%d:)", response.ID, response.Service)
 }
 
-func (sink *_Sink) dispatchRequest(request *Request) {
+func (sink *_Sink) dispatchRequest(message *Message) error {
+
+	request, err := ReadRequest(bytes.NewBuffer(message.Content))
+
+	if err != nil {
+		sink.E("[%s] unmarshal request error\n%s", sink.name, err)
+		return err
+	}
+
 	sink.RLock()
 	defer sink.RUnlock()
 
@@ -192,7 +200,7 @@ func (sink *_Sink) dispatchRequest(request *Request) {
 
 		if err != nil {
 			sink.E("dispatch request(%d)(%d:%d) error\n%s", request.ID, request.Service, request.Method, err)
-			return
+			return nil
 		}
 
 		var buff bytes.Buffer
@@ -201,10 +209,8 @@ func (sink *_Sink) dispatchRequest(request *Request) {
 
 		if err != nil {
 			sink.E("marshal request(%d)(%d:%d)'s response error\n%s", request.ID, request.Service, request.Method, err)
-			return
+			return nil
 		}
-
-		message := NewMessage()
 
 		message.Code = CodeResponse
 
@@ -212,10 +218,12 @@ func (sink *_Sink) dispatchRequest(request *Request) {
 
 		go sink.SendMessage(message)
 
-		return
+		return nil
 	}
 
 	sink.W("[%s] unhandle request(%d)(%d:%d)", sink.name, request.ID, request.Service, request.Method)
+
+	return nil
 }
 
 func (sink *_Sink) OpenHandler(context Context) error {
@@ -246,14 +254,11 @@ func (sink *_Sink) HandleWrite(context Context, message *Message) (*Message, err
 
 		sink.D("[%s] request ", sink.name)
 
-		request, err := ReadRequest(bytes.NewBuffer(message.Content))
+		err := sink.dispatchRequest(message)
 
 		if err != nil {
-			sink.E("[%s] unmarshal request error\n%s", sink.name, err)
 			return nil, err
 		}
-
-		sink.dispatchRequest(request)
 
 		sink.D("[%s] request -- success", sink.name)
 
