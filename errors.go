@@ -9,4 +9,6 @@ var (
 	ErrTimeout  = errors.New("rpc timeout")
 	ErrCanceled = errors.New("rpc canceled")
 	ErrClosed   = errors.New("pipeline closed")
+	ErrSkip     = errors.New("skip handle pipeline event")
+	ErrUnknown  = errors.New("unknown error")
 )

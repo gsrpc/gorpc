@@ -7,38 +7,38 @@ type _LoggerHandler struct {
 }
 
 // LoggerHandler open log handler
-func LoggerHandler(name string) Handler {
+func LoggerHandler() Handler {
 	return &_LoggerHandler{
-		Log: gslogger.Get(name),
+		Log: gslogger.Get("log-handler"),
 	}
 }
 
 func (handler *_LoggerHandler) OpenHandler(context Context) error {
-	handler.D("open handlers")
+	handler.I("[%s] open handlers", context)
 	return nil
 }
 
 func (handler *_LoggerHandler) CloseHandler(context Context) {
-	handler.D("close handlers")
+	handler.I("[%s] close handlers", context)
 }
 
 func (handler *_LoggerHandler) HandleWrite(context Context, message *Message) (*Message, error) {
 
-	handler.D("write message(%s)", message.Code)
+	handler.D("[%s] write message(%s)", context, message.Code)
 
 	return message, nil
 }
 
 func (handler *_LoggerHandler) HandleRead(context Context, message *Message) (*Message, error) {
 
-	handler.D("read message(%s)", message.Code)
+	handler.D("[%s] read message(%s)", context, message.Code)
 
 	return message, nil
 }
 
 func (handler *_LoggerHandler) HandleError(context Context, err error) error {
 
-	handler.D("handle err :%s", err)
+	handler.E("[%s] handle err :%s", context, err)
 
 	return err
 }
@@ -71,7 +71,6 @@ func (handler *EventHandler) OpenHandler(context Context) error {
 
 // CloseHandler .
 func (handler *EventHandler) CloseHandler(context Context) {
-
 	handler.Close <- true
 }
 

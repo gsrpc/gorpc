@@ -13,48 +13,24 @@ import (
 
 // TCPServer server
 type TCPServer struct {
-	gslogger.Log                             // Mixin Log APIs
-	sync.RWMutex                             // Mixin mutex
-	name         string                      // server name
-	timeout      time.Duration               // net trans timeout
-	cachsize     int                         // cached size
-	dispatchers  map[uint16]gorpc.Dispatcher // dispatchers
-	listener     net.Listener                // listener
-	builder      *gorpc.RouterBuilder        // router builder
+	gslogger.Log                        // Mixin Log APIs
+	sync.RWMutex                        // Mixin mutex
+	name         string                 // server name
+	timeout      time.Duration          // net trans timeout
+	cachsize     int                    // cached size
+	listener     net.Listener           // listener
+	builder      *gorpc.PipelineBuilder // router builder
 }
 
 // NewTCPServer create new tcp server
-func NewTCPServer(builder *gorpc.RouterBuilder) *TCPServer {
+func NewTCPServer(builder *gorpc.PipelineBuilder) *TCPServer {
 	return &TCPServer{
-		name:        "rpc-tcp-server",
-		Log:         gslogger.Get("rpc-tcp-server"),
-		timeout:     gsconfig.Seconds("gorpc.timeout", 5),
-		builder:     builder,
-		cachsize:    gsconfig.Int("gorpc.cachesize", 1024),
-		dispatchers: make(map[uint16]gorpc.Dispatcher),
+		name:     "rpc-tcp-server",
+		Log:      gslogger.Get("rpc-tcp-server"),
+		timeout:  gsconfig.Seconds("gorpc.timeout", 5),
+		builder:  builder,
+		cachsize: gsconfig.Int("gorpc.cachesize", 1024),
 	}
-}
-
-// Register .
-func (server *TCPServer) Register(dispatcher gorpc.Dispatcher) *TCPServer {
-
-	server.Lock()
-	defer server.Unlock()
-
-	server.dispatchers[dispatcher.ID()] = dispatcher
-
-	return server
-}
-
-// Unregister .
-func (server *TCPServer) Unregister(dispatcher gorpc.Dispatcher) {
-	server.Lock()
-	defer server.Unlock()
-
-	if dispatcher, ok := server.dispatchers[dispatcher.ID()]; ok && dispatcher == dispatcher {
-		delete(server.dispatchers, dispatcher.ID())
-	}
-
 }
 
 // Name .
@@ -129,45 +105,48 @@ func (server *TCPServer) Close() {
 
 type _TCPChannel struct {
 	sync.Mutex
-	gslogger.Log             // Mixin Log APIs
-	gorpc.Router             // Mixin Router
-	name         string      // name
-	raddr        string      // remote address
-	conn         net.Conn    // connection
-	state        gorpc.State // connection state
+	gslogger.Log                // Mixin Log APIs
+	pipeline     gorpc.Pipeline // pipeline
+	name         string         // name
+	raddr        string         // remote address
+	conn         net.Conn       // connection
+	state        gorpc.State    // connection state
 }
 
-func (server *TCPServer) newChannel(conn net.Conn) {
+func (server *TCPServer) newChannel(conn net.Conn) (err error) {
 
 	channel := &_TCPChannel{
+		Log:   gslogger.Get("tcp-server"),
 		name:  server.name,
 		raddr: conn.RemoteAddr().String(),
 		conn:  conn,
 		state: gorpc.StateConnected,
 	}
 
-	channel.Router = server.builder.Create(channel)
+	channel.pipeline, err = server.builder.Build(server.name)
+
+	if err != nil {
+		return err
+	}
 
 	server.RLock()
 	defer server.RUnlock()
 
-	for _, dispatcher := range server.dispatchers {
-		channel.Register(dispatcher)
-	}
+	go channel.recvLoop(channel.pipeline, conn)
 
-	channel.Router.StateChanged(gorpc.StateConnected)
+	go channel.sendLoop(channel.pipeline, conn)
 
-	go channel.recvLoop(conn)
-
-	go channel.sendLoop(conn)
+	return nil
 }
 
-func (channel *_TCPChannel) recvLoop(conn net.Conn) {
+func (channel *_TCPChannel) recvLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 	stream := gorpc.NewStream(conn, conn)
 
 	for {
 
 		msg, err := gorpc.ReadMessage(stream)
+
+		channel.V("read message[%s] :%v", msg.Code, msg.Content)
 
 		if err != nil {
 			channel.E("[%s:%s] recv message error \n%s", channel.name, channel.raddr, err)
@@ -175,23 +154,29 @@ func (channel *_TCPChannel) recvLoop(conn net.Conn) {
 			break
 		}
 
-		channel.Router.RecvMessage(msg)
+		pipeline.ChannelWrite(msg)
 	}
 }
 
-func (channel *_TCPChannel) sendLoop(conn net.Conn) {
+func (channel *_TCPChannel) sendLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 
 	stream := gorpc.NewStream(conn, conn)
 
 	for {
 
-		msg, ok := channel.SendQ()
+		msg, err := pipeline.ChannelRead()
 
-		if !ok {
+		if err == gorpc.ErrClosed {
+			channel.close(conn)
 			break
 		}
 
-		err := gorpc.WriteMessage(stream, msg)
+		if err != nil {
+			channel.E("pipeline write error\n%s", err)
+			continue
+		}
+
+		err = gorpc.WriteMessage(stream, msg)
 
 		gserrors.Assert(err == nil, "check WriteMessage")
 
@@ -206,18 +191,7 @@ func (channel *_TCPChannel) sendLoop(conn net.Conn) {
 }
 
 func (channel *_TCPChannel) Close() {
-	channel.Disconnect()
-}
-
-// Disconnect .
-func (channel *_TCPChannel) Disconnect() {
-
-	channel.Lock()
-	defer channel.Unlock()
-
-	if channel.conn != nil {
-		channel.conn.Close()
-	}
+	channel.close(channel.conn)
 }
 
 func (channel *_TCPChannel) close(conn net.Conn) {
@@ -226,6 +200,7 @@ func (channel *_TCPChannel) close(conn net.Conn) {
 	defer channel.Unlock()
 
 	if conn != nil {
+		channel.I("close tcp connection %s(%p)", conn.RemoteAddr(), conn)
 		conn.Close()
 	}
 
@@ -233,5 +208,12 @@ func (channel *_TCPChannel) close(conn net.Conn) {
 		return
 	}
 
-	channel.Router.StateChanged(gorpc.StateDisconnect)
+	if channel.pipeline != nil {
+		channel.pipeline.Close()
+		channel.I("close  pipeline %s(%p)", channel.name, channel.pipeline)
+	}
+
+	channel.conn = nil
+
+	channel.pipeline = nil
 }

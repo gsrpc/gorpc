@@ -12,26 +12,26 @@ import (
 
 // TCPClient gorpc client
 type TCPClient struct {
-	gslogger.Log               // Mixin Log APIs
-	sync.RWMutex               // Mixin mutex
-	gorpc.Router               // Mixin Router
-	name         string        // client name
-	raddr        string        // remote service address
-	state        gorpc.State   // connect state maching
-	conn         net.Conn      // connection
-	retry        time.Duration // reconnect timeout
+	gslogger.Log                        // Mixin Log APIs
+	sync.RWMutex                        // Mixin mutex
+	pipeline     gorpc.Pipeline         // pipeline
+	builder      *gorpc.PipelineBuilder // pipeline
+	name         string                 // client name
+	raddr        string                 // remote service address
+	state        gorpc.State            // connect state maching
+	conn         net.Conn               // connection
+	retry        time.Duration          // reconnect timeout
 }
 
 // NewTCPClient create new tcp client
-func NewTCPClient(raddr string, builder *gorpc.RouterBuilder) *TCPClient {
+func NewTCPClient(raddr string, builder *gorpc.PipelineBuilder) *TCPClient {
 	client := &TCPClient{
-		name:  raddr,
-		Log:   gslogger.Get("rpc-tcp-client"),
-		raddr: raddr,
-		state: gorpc.StateDisconnect,
+		name:    raddr,
+		Log:     gslogger.Get("rpc-tcp-client"),
+		raddr:   raddr,
+		state:   gorpc.StateDisconnect,
+		builder: builder,
 	}
-
-	client.Router = builder.Create(client)
 
 	return client
 }
@@ -49,8 +49,6 @@ func (client *TCPClient) Connect(retry time.Duration) *TCPClient {
 
 	client.state = gorpc.StateConnecting
 
-	client.Router.StateChanged(client.state)
-
 	go func() {
 		conn, err := net.Dial("tcp", client.raddr)
 
@@ -59,8 +57,6 @@ func (client *TCPClient) Connect(retry time.Duration) *TCPClient {
 			client.Lock()
 			client.state = gorpc.StateDisconnect
 			client.Unlock()
-
-			client.Router.StateChanged(client.state)
 
 			client.E("connect server error\n%s", gserrors.New(err))
 
@@ -83,21 +79,24 @@ func (client *TCPClient) Connect(retry time.Duration) *TCPClient {
 // Close .
 func (client *TCPClient) Close() {
 
-	client.D("close client")
-
-	client.Disconnect()
-}
-
-// Disconnect .
-func (client *TCPClient) Disconnect() {
 	client.Lock()
 	defer client.Unlock()
 
 	if client.conn != nil {
+		client.I("close tcp connection %s(%p)", client.conn.RemoteAddr(), client.conn)
 		client.conn.Close()
 	}
 
-	client.state = gorpc.StateDisconnect
+	if client.pipeline != nil {
+		client.pipeline.Close()
+		client.I("close  pipeline %s(%p)", client.name, client.pipeline)
+	}
+
+	client.conn = nil
+
+	client.pipeline = nil
+
+	client.state = gorpc.StateClosed
 }
 
 func (client *TCPClient) close(conn net.Conn) {
@@ -105,6 +104,7 @@ func (client *TCPClient) close(conn net.Conn) {
 	defer client.Unlock()
 
 	if conn != nil {
+		client.I("close tcp connection %s(%p)", conn.RemoteAddr(), conn)
 		conn.Close()
 	}
 
@@ -112,9 +112,16 @@ func (client *TCPClient) close(conn net.Conn) {
 		return
 	}
 
-	client.state = gorpc.StateDisconnect
+	if client.pipeline != nil {
+		client.pipeline.Close()
+		client.I("close  pipeline %s(%p)", client.name, client.pipeline)
+	}
 
-	client.Router.StateChanged(client.state)
+	client.conn = nil
+
+	client.pipeline = nil
+
+	client.state = gorpc.StateDisconnect
 
 	if client.retry != 0 {
 		go client.Connect(client.retry)
@@ -131,17 +138,32 @@ func (client *TCPClient) connected(conn net.Conn) {
 		return
 	}
 
+	var err error
+
+	client.pipeline, err = client.builder.Build(client.name)
+
+	if err != nil {
+		client.E("create pipeline error\n%s", err)
+
+		client.state = gorpc.StateDisconnect
+
+		if client.retry != 0 {
+			go client.Connect(client.retry)
+		}
+
+		return
+	}
+
 	client.state = gorpc.StateConnected
 
 	client.conn = conn
 
-	go client.recvLoop(conn)
-	go client.sendLoop(conn)
+	go client.recvLoop(client.pipeline, conn)
+	go client.sendLoop(client.pipeline, conn)
 
-	client.Router.StateChanged(client.state)
 }
 
-func (client *TCPClient) recvLoop(conn net.Conn) {
+func (client *TCPClient) recvLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 	stream := gorpc.NewStream(conn, conn)
 
 	for {
@@ -154,23 +176,40 @@ func (client *TCPClient) recvLoop(conn net.Conn) {
 			break
 		}
 
-		client.Router.RecvMessage(msg)
+		err = pipeline.ChannelWrite(msg)
+
+		if err == gorpc.ErrClosed {
+			client.close(conn)
+			break
+		}
+
+		if err != nil {
+			client.E("pipeline write error\n%s", err)
+		}
 	}
 }
 
-func (client *TCPClient) sendLoop(conn net.Conn) {
+func (client *TCPClient) sendLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 
 	stream := gorpc.NewStream(conn, conn)
 
 	for {
 
-		msg, ok := client.SendQ()
+		msg, err := pipeline.ChannelRead()
 
-		if !ok {
+		if err == gorpc.ErrClosed {
+			client.close(conn)
 			break
 		}
 
-		err := gorpc.WriteMessage(stream, msg)
+		if err != nil {
+			client.E("pipeline write error\n%s", err)
+			continue
+		}
+
+		client.V("write message[%s] :%v", msg.Code, msg.Content)
+
+		err = gorpc.WriteMessage(stream, msg)
 
 		gserrors.Assert(err == nil, "check WriteMessage")
 

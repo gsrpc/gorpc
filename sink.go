@@ -215,14 +215,14 @@ func (sink *_Sink) dispatchRequest(request *Request) {
 		return
 	}
 
-	sink.W("unhandle request(%d)(%d:%d)", request.ID, request.Service, request.Method)
+	sink.W("[%s] unhandle request(%d)(%d:%d)", sink.name, request.ID, request.Service, request.Method)
 }
 
 func (sink *_Sink) OpenHandler(context Context) error {
 
 	go func() {
 		for message := range sink.cached {
-			context.Write(message)
+			context.WriteReadPipline(message)
 		}
 	}()
 
@@ -243,33 +243,42 @@ func (sink *_Sink) HandleWrite(context Context, message *Message) (*Message, err
 
 	switch message.Code {
 	case CodeRequest:
+
+		sink.D("[%s] request ", sink.name)
+
 		request, err := ReadRequest(bytes.NewBuffer(message.Content))
 
 		if err != nil {
-			sink.E("unmarshal request error\n%s", err)
+			sink.E("[%s] unmarshal request error\n%s", sink.name, err)
 			return nil, err
 		}
 
 		sink.dispatchRequest(request)
 
+		sink.D("[%s] request -- success", sink.name)
+
 		return nil, nil
 
 	case CodeResponse:
 
+		sink.D("[%s]response ", sink.name)
+
 		response, err := ReadResponse(bytes.NewBuffer(message.Content))
 
 		if err != nil {
-			sink.E("unmarshal response error\n%s", err)
+			sink.E("[%s] unmarshal response error\n%s", sink.name, err)
 			return nil, err
 		}
 
 		sink.dispatchResponse(response)
 
+		sink.D("[%s] response -- success", sink.name)
+
 		return nil, nil
 
 	default:
 
-		sink.W("unsupport message(%s)", message.Code)
+		sink.W("[%s] unsupport message(%s)", sink.name, message.Code)
 
 		return message, nil
 	}

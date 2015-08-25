@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gsdocker/gslogger"
 	"github.com/gsrpc/gorpc"
 )
 
@@ -36,36 +35,66 @@ var dispatcher = test.MakeRESTful(0, &mockRESTful{
 
 func TestConnect(t *testing.T) {
 
-	defer gslogger.Join()
-
 	G, _ := new(big.Int).SetString("6849211231874234332173554215962568648211715948614349192108760170867674332076420634857278025209099493881977517436387566623834457627945222750416199306671083", 0)
 
 	P, _ := new(big.Int).SetString("13196520348498300509170571968898643110806720751219744788129636326922565480984492185368038375211941297871289403061486510064429072584259746910423138674192557", 0)
 
+	serverSink := gorpc.NewSink("server-sink", time.Second*5, 1024)
+
+	serverSink.Register(dispatcher)
+
 	go NewTCPServer(
-		gorpc.BuildRouter("client").Handler(
+		gorpc.BuildPipeline().Handler(
+			"log-server",
+			func() gorpc.Handler {
+				return gorpc.LoggerHandler()
+			},
+		).Handler(
+			"dh-server",
 			func() gorpc.Handler {
 				return NewCryptoServer(DHKeyResolve(func(device *gorpc.Device) (*DHKey, error) {
 					return NewDHKey(G, P), nil
 				}))
 			},
+		).Handler(
+			"sink-server",
+			func() gorpc.Handler {
+				return serverSink
+			},
 		),
-	).Register(dispatcher).Listen(":13512")
+	).Listen(":13512")
+
+	clientSink := gorpc.NewSink("client-sink", time.Second*5, 1024)
 
 	client := NewTCPClient(
 		"127.0.0.1:13512",
-		gorpc.BuildRouter("server").Handler(
+		gorpc.BuildPipeline().Handler(
+			"log-client",
+			func() gorpc.Handler {
+				return gorpc.LoggerHandler()
+			},
+		).Handler(
+			"dh-client",
 			func() gorpc.Handler {
 				return NewCryptoClient(gorpc.NewDevice(), G, P)
 			},
-		).Create(),
-	).Connect(time.Second * 2)
+		).Handler(
+			"sink-client",
+			func() gorpc.Handler {
+				return clientSink
+			},
+		),
+	).Connect(0)
 
-	api := test.BindRESTful(0, client)
+	api := test.BindRESTful(0, clientSink)
 
 	client.D("call Post")
 
-	api.Post("nil", nil)
+	err := api.Post("nil", nil)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	client.D("call Post -- success")
 

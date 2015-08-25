@@ -3,21 +3,28 @@ package gorpc
 import (
 	"testing"
 	"time"
-
-	"github.com/gsdocker/gslogger"
 )
 
 func TestPipeline(t *testing.T) {
 
-	defer gslogger.Join()
+	eventHandler := HandleEvent(1)
+
+	sink := NewSink("test-sink", time.Second*5, 1024)
 
 	pipline, err := BuildPipeline().Handler(
+		"log",
 		func() Handler {
-			return LoggerHandler("one")
+			return LoggerHandler()
 		},
 	).Handler(
+		"event",
 		func() Handler {
-			return NewSink("test-sink", time.Second*5, 1024)
+			return eventHandler
+		},
+	).Handler(
+		"sink",
+		func() Handler {
+			return sink
 		},
 	).Build("pipeline-test")
 
@@ -35,9 +42,7 @@ func TestPipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	eventHandler := HandleEvent(1)
-
-	pipline.AddHandler(eventHandler)
+	<-eventHandler.Write
 
 	err = pipline.ChannelWrite(message)
 
@@ -46,6 +51,20 @@ func TestPipeline(t *testing.T) {
 	}
 
 	<-eventHandler.Write
+
+	sink.SendMessage(message)
+
+	msg, err := pipline.ChannelRead()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if msg != message {
+		t.Fatal("test pipeline read err")
+	}
+
+	<-eventHandler.Read
 
 	pipline.Close()
 

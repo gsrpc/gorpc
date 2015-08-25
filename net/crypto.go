@@ -98,7 +98,101 @@ func NewCryptoServer(resovler DHKeyResolver) gorpc.Handler {
 	}
 }
 
-func (handler *_CryptoServer) HandleSend(router gorpc.Router, message *gorpc.Message) (*gorpc.Message, error) {
+func (handler *_CryptoServer) OpenHandler(context gorpc.Context) error {
+	return nil
+}
+
+func (handler *_CryptoServer) CloseHandler(context gorpc.Context) {
+
+}
+
+func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
+
+	if handler.block == nil {
+
+		handler.D("expect WhoAmI message")
+		// expect whoAmI message
+		if message.Code != gorpc.CodeWhoAmI {
+			context.Close()
+			return nil, gserrors.Newf(gorpc.ErrRPC, "expect WhoAmI message but got(%s)", message.Code)
+		}
+
+		handler.D("parse WhoAmI message")
+
+		whoAmI, err := gorpc.ReadWhoAmI(bytes.NewBuffer(message.Content))
+
+		if err != nil {
+			context.Close()
+			return nil, err
+		}
+
+		val, ok := new(big.Int).SetString(string(whoAmI.Context), 0)
+
+		if !ok {
+			context.Close()
+			return nil, gserrors.Newf(gorpc.ErrRPC, "parse WhoAmI#Context as big.Int error")
+		}
+
+		dhKey, err := handler.resovler.Resolve(whoAmI.ID)
+
+		if err != nil {
+			context.Close()
+			return nil, err
+		}
+
+		message.Code = gorpc.CodeAccept
+
+		message.Content = []byte(dhKey.Exchange().String())
+
+		context.WriteReadPipline(message)
+
+		key := make([]byte, des.BlockSize)
+
+		keyval := dhKey.Gen(val).Uint64()
+
+		binary.BigEndian.PutUint64(key[:8], keyval)
+
+		handler.D("shared key \n\t%d\n\t%v ", keyval, key)
+
+		block, err := des.NewCipher(key)
+
+		if err != nil {
+			context.Close()
+			return nil, gserrors.Newf(err, "create new des Cipher error")
+		}
+
+		handler.block = block
+
+		handler.I("handshake -- success")
+
+		return nil, nil
+
+	}
+
+	if message.Code == gorpc.CodeHeartbeat {
+		return message, nil
+	}
+
+	blocksize := handler.block.BlockSize()
+
+	if len(message.Content)%blocksize != 0 {
+		context.Close()
+		return nil, gserrors.Newf(gorpc.ErrRPC, "invalid encrypt data")
+	}
+
+	blocks := len(message.Content) / blocksize
+
+	for i := 0; i < blocks; i++ {
+		offset := i * blocksize
+		v := message.Content[offset : offset+blocksize]
+		handler.block.Decrypt(v, v)
+	}
+
+	message.Content = PKCS5UnPadding(message.Content)
+
+	return message, nil
+}
+func (handler *_CryptoServer) HandleRead(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
 
 	if handler.block != nil {
 
@@ -122,110 +216,8 @@ func (handler *_CryptoServer) HandleSend(router gorpc.Router, message *gorpc.Mes
 	return message, nil
 }
 
-func (handler *_CryptoServer) HandleRecieved(router gorpc.Router, message *gorpc.Message) (*gorpc.Message, error) {
-
-	if handler.block == nil {
-
-		handler.D("expect WhoAmI message")
-		// expect whoAmI message
-		if message.Code != gorpc.CodeWhoAmI {
-			router.Close()
-			return nil, gserrors.Newf(gorpc.ErrRPC, "expect WhoAmI message but got(%s)", message.Code)
-		}
-
-		handler.D("parse WhoAmI message")
-
-		whoAmI, err := gorpc.ReadWhoAmI(bytes.NewBuffer(message.Content))
-
-		if err != nil {
-			router.Close()
-			return nil, err
-		}
-
-		val, ok := new(big.Int).SetString(string(whoAmI.Context), 0)
-
-		if !ok {
-			router.Close()
-			return nil, gserrors.Newf(gorpc.ErrRPC, "parse WhoAmI#Context as big.Int error")
-		}
-
-		dhKey, err := handler.resovler.Resolve(whoAmI.ID)
-
-		if err != nil {
-			router.Close()
-			return nil, err
-		}
-
-		message.Code = gorpc.CodeAccept
-
-		message.Content = []byte(dhKey.Exchange().String())
-
-		router.HandlerSend(message, handler)
-
-		key := make([]byte, des.BlockSize)
-
-		keyval := dhKey.Gen(val).Uint64()
-
-		binary.BigEndian.PutUint64(key[:8], keyval)
-
-		handler.D("shared key \n\t%d\n\t%v ", keyval, key)
-
-		block, err := des.NewCipher(key)
-
-		if err != nil {
-			router.Close()
-			return nil, gserrors.Newf(err, "create new des Cipher error")
-		}
-
-		handler.block = block
-
-		handler.I("handshake -- success")
-
-		router.HandlerStateChanged(gorpc.StateConnected, handler)
-
-		return nil, nil
-
-	}
-
-	if message.Code == gorpc.CodeHeartbeat {
-		return message, nil
-	}
-
-	blocksize := handler.block.BlockSize()
-
-	if len(message.Content)%blocksize != 0 {
-		router.Close()
-		return nil, gserrors.Newf(gorpc.ErrRPC, "%s invalid encrypt data", router)
-	}
-
-	blocks := len(message.Content) / blocksize
-
-	for i := 0; i < blocks; i++ {
-		offset := i * blocksize
-		v := message.Content[offset : offset+blocksize]
-		handler.block.Decrypt(v, v)
-	}
-
-	message.Content = PKCS5UnPadding(message.Content)
-
-	return message, nil
-}
-
-func (handler *_CryptoServer) HandleClose(router gorpc.Router) {
-
-}
-
-func (handler *_CryptoServer) HandleError(router gorpc.Router, err error) error {
+func (handler *_CryptoServer) HandleError(context gorpc.Context, err error) error {
 	return err
-}
-
-func (handler *_CryptoServer) HandleStateChanged(router gorpc.Router, state gorpc.State) bool {
-
-	if state == gorpc.StateConnected {
-		return false
-	}
-
-	return true
 }
 
 type _CryptoClient struct {
@@ -244,43 +236,43 @@ func NewCryptoClient(device *gorpc.Device, G, P *big.Int) gorpc.Handler {
 	}
 }
 
-func (handler *_CryptoClient) HandleStateChanged(router gorpc.Router, state gorpc.State) bool {
+func (handler *_CryptoClient) OpenHandler(context gorpc.Context) error {
+	// create whoAmI message
 
-	if state == gorpc.StateConnected {
-		// create whoAmI message
+	message := gorpc.NewMessage()
 
-		message := gorpc.NewMessage()
+	message.Code = gorpc.CodeWhoAmI
 
-		message.Code = gorpc.CodeWhoAmI
+	whoAmI := gorpc.NewWhoAmI()
 
-		whoAmI := gorpc.NewWhoAmI()
+	whoAmI.ID = handler.device
 
-		whoAmI.ID = handler.device
+	whoAmI.Context = []byte(handler.dhKey.Exchange().String())
 
-		whoAmI.Context = []byte(handler.dhKey.Exchange().String())
+	var buff bytes.Buffer
 
-		var buff bytes.Buffer
+	err := gorpc.WriteWhoAmI(&buff, whoAmI)
 
-		err := gorpc.WriteWhoAmI(&buff, whoAmI)
-
-		if err != nil {
-			router.Close()
-			return false
-		}
-
-		message.Content = buff.Bytes()
-
-		router.HandlerSend(message, handler)
-
-		handler.D("send whoAmI handshake")
-
-		return false
+	if err != nil {
+		context.Close()
+		return err
 	}
 
-	return true
+	message.Content = buff.Bytes()
+
+	handler.D("send whoAmI handshake")
+
+	context.WriteReadPipline(message)
+
+	return gorpc.ErrSkip
+
 }
 
-func (handler *_CryptoClient) HandleSend(router gorpc.Router, message *gorpc.Message) (*gorpc.Message, error) {
+func (handler *_CryptoClient) CloseHandler(context gorpc.Context) {
+
+}
+
+func (handler *_CryptoClient) HandleRead(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
 	if handler.block != nil {
 
 		blocksize := handler.block.BlockSize()
@@ -289,8 +281,6 @@ func (handler *_CryptoClient) HandleSend(router gorpc.Router, message *gorpc.Mes
 
 		blocks := len(content) / blocksize
 
-		handler.V("blocksize :%d blocks ：%d", blocksize, blocks)
-
 		for i := 0; i < blocks; i++ {
 			offset := i * blocksize
 			v := content[offset : offset+blocksize]
@@ -298,12 +288,14 @@ func (handler *_CryptoClient) HandleSend(router gorpc.Router, message *gorpc.Mes
 		}
 
 		message.Content = content
+
+		handler.V("encrypt message content[blocksize :%d, blocks ：%d]", blocksize, blocks)
 	}
 
 	return message, nil
 }
 
-func (handler *_CryptoClient) HandleRecieved(router gorpc.Router, message *gorpc.Message) (*gorpc.Message, error) {
+func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
 
 	if handler.block == nil {
 
@@ -311,7 +303,7 @@ func (handler *_CryptoClient) HandleRecieved(router gorpc.Router, message *gorpc
 
 		if message.Code != gorpc.CodeAccept {
 
-			router.Close()
+			context.Close()
 
 			return nil, gserrors.Newf(gorpc.ErrRPC, "expect handshake(Accept) but got(%s)", message.Code)
 		}
@@ -321,7 +313,7 @@ func (handler *_CryptoClient) HandleRecieved(router gorpc.Router, message *gorpc
 		val, ok := new(big.Int).SetString(string(message.Content), 0)
 
 		if !ok {
-			router.Close()
+			context.Close()
 			return nil, gserrors.Newf(gorpc.ErrRPC, "parse Accept#Content as big.Int error")
 		}
 
@@ -336,7 +328,7 @@ func (handler *_CryptoClient) HandleRecieved(router gorpc.Router, message *gorpc
 		block, err := des.NewCipher(key)
 
 		if err != nil {
-			router.Close()
+			context.Close()
 			return nil, gserrors.Newf(err, "create new des Cipher error")
 		}
 
@@ -344,7 +336,7 @@ func (handler *_CryptoClient) HandleRecieved(router gorpc.Router, message *gorpc
 
 		handler.I("handshake -- success")
 
-		return nil, nil
+		return nil, context.Open()
 	}
 
 	if message.Code == gorpc.CodeHeartbeat {
@@ -354,8 +346,8 @@ func (handler *_CryptoClient) HandleRecieved(router gorpc.Router, message *gorpc
 	blocksize := handler.block.BlockSize()
 
 	if len(message.Content)%blocksize != 0 {
-		router.Close()
-		return nil, gserrors.Newf(gorpc.ErrRPC, "%s invalid encrypt data", router)
+		context.Close()
+		return nil, gserrors.Newf(gorpc.ErrRPC, "%s invalid encrypt data", context)
 	}
 
 	blocks := len(message.Content) / blocksize
@@ -371,10 +363,6 @@ func (handler *_CryptoClient) HandleRecieved(router gorpc.Router, message *gorpc
 	return message, nil
 }
 
-func (handler *_CryptoClient) HandleClose(router gorpc.Router) {
-
-}
-
-func (handler *_CryptoClient) HandleError(router gorpc.Router, err error) error {
+func (handler *_CryptoClient) HandleError(context gorpc.Context, err error) error {
 	return err
 }
