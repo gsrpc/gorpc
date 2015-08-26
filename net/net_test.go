@@ -39,7 +39,7 @@ func TestConnect(t *testing.T) {
 
 	P, _ := new(big.Int).SetString("13196520348498300509170571968898643110806720751219744788129636326922565480984492185368038375211941297871289403061486510064429072584259746910423138674192557", 0)
 
-	serverSink := gorpc.NewSink("server-sink", time.Second*5, 1024)
+	serverSink := gorpc.NewSink("server-sink", time.Second*5, 1024, 10)
 
 	serverSink.Register(dispatcher)
 
@@ -64,7 +64,7 @@ func TestConnect(t *testing.T) {
 		),
 	).Listen(":13512")
 
-	clientSink := gorpc.NewSink("client-sink", time.Second*5, 1024)
+	clientSink := gorpc.NewSink("client-sink", time.Second*5, 1024, 10)
 
 	client := NewTCPClient(
 		"127.0.0.1:13512",

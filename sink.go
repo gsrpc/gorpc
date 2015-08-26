@@ -68,10 +68,12 @@ type _Sink struct {
 	dispatchers  map[uint16]Dispatcher // register dispatchers
 	promises     map[uint16]*_Promise  // rpc promise
 	cached       chan *Message         // cached message
+	cachedTask   chan func()           // cached task
+	processors   int                   // task processors
 }
 
 // NewSink .
-func NewSink(name string, timeout time.Duration, cached int) Sink {
+func NewSink(name string, timeout time.Duration, cached int, processors int) Sink {
 	return &_Sink{
 		Log:         gslogger.Get("sink"),
 		name:        name,
@@ -79,6 +81,8 @@ func NewSink(name string, timeout time.Duration, cached int) Sink {
 		dispatchers: make(map[uint16]Dispatcher),
 		promises:    make(map[uint16]*_Promise),
 		cached:      make(chan *Message, cached),
+		cachedTask:  make(chan func(), cached),
+		processors:  processors,
 	}
 }
 
@@ -143,13 +147,21 @@ func (sink *_Sink) Send(call *Request) (Future, error) {
 	return promise, nil
 }
 
-func (sink *_Sink) SendMessage(message *Message) error {
+func (sink *_Sink) SendMessage(message *Message) (err error) {
+
+	defer func() {
+		if e := recover(); e != nil {
+			err = ErrClosed
+		}
+	}()
+
 	select {
 	case sink.cached <- message:
-		return nil
 	default:
-		return gserrors.Newf(ErrOverflow, "sink(%s) cached overflow", sink)
+		err = gserrors.Newf(ErrOverflow, "sink(%s) cached overflow", sink)
 	}
+
+	return
 }
 
 // Register .
@@ -182,6 +194,15 @@ func (sink *_Sink) dispatchResponse(response *Response) {
 	sink.W("unhandle response(%d)(%d:)", response.ID, response.Service)
 }
 
+func (sink *_Sink) dispatch(id uint16) (dispatcher Dispatcher, ok bool) {
+	sink.RLock()
+	defer sink.RUnlock()
+
+	dispatcher, ok = sink.dispatchers[id]
+
+	return
+}
+
 func (sink *_Sink) dispatchRequest(message *Message) error {
 
 	request, err := ReadRequest(bytes.NewBuffer(message.Content))
@@ -191,10 +212,7 @@ func (sink *_Sink) dispatchRequest(message *Message) error {
 		return err
 	}
 
-	sink.RLock()
-	defer sink.RUnlock()
-
-	if dispatcher, ok := sink.dispatchers[request.Service]; ok {
+	if dispatcher, ok := sink.dispatch(request.Service); ok {
 
 		response, err := dispatcher.Dispatch(request)
 
@@ -234,10 +252,36 @@ func (sink *_Sink) OpenHandler(context Context) error {
 		}
 	}()
 
+	for i := 0; i < sink.processors; i++ {
+		go func() {
+			for f := range sink.cachedTask {
+				sink.protectedCall(f)
+			}
+		}()
+	}
+
 	return nil
 }
+
+func (sink *_Sink) protectedCall(f func()) {
+
+	defer func() {
+		if e := recover(); e != nil {
+
+			if _, ok := e.(error); ok {
+				sink.E("%s", gserrors.Newf(e.(error), "catched exception"))
+			} else {
+				sink.E("%s", gserrors.Newf(ErrUnknown, "catched exception :%s", e))
+			}
+		}
+	}()
+
+	f()
+}
+
 func (sink *_Sink) CloseHandler(context Context) {
 	close(sink.cached)
+	close(sink.cachedTask)
 }
 func (sink *_Sink) HandleError(context Context, err error) error {
 	return err
@@ -247,26 +291,36 @@ func (sink *_Sink) HandleRead(context Context, message *Message) (*Message, erro
 	return message, nil
 }
 
+func (sink *_Sink) pushTask(f func()) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = ErrClosed
+		}
+	}()
+
+	select {
+	case sink.cachedTask <- f:
+	default:
+		err = gserrors.Newf(ErrOverflow, "sink task(%s) task cached overflow", sink)
+	}
+
+	return
+}
+
 func (sink *_Sink) HandleWrite(context Context, message *Message) (*Message, error) {
 
 	switch message.Code {
 	case CodeRequest:
 
-		sink.D("[%s] request ", sink.name)
-
-		err := sink.dispatchRequest(message)
+		err := sink.pushTask(func() { sink.dispatchRequest(message) })
 
 		if err != nil {
 			return nil, err
 		}
 
-		sink.D("[%s] request -- success", sink.name)
-
 		return nil, nil
 
 	case CodeResponse:
-
-		sink.D("[%s]response ", sink.name)
 
 		response, err := ReadResponse(bytes.NewBuffer(message.Content))
 
@@ -275,9 +329,11 @@ func (sink *_Sink) HandleWrite(context Context, message *Message) (*Message, err
 			return nil, err
 		}
 
-		sink.dispatchResponse(response)
+		err = sink.pushTask(func() { sink.dispatchResponse(response) })
 
-		sink.D("[%s] response -- success", sink.name)
+		if err != nil {
+			return nil, err
+		}
 
 		return nil, nil
 

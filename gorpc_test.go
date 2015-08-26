@@ -9,7 +9,7 @@ func TestPipeline(t *testing.T) {
 
 	eventHandler := HandleEvent(1)
 
-	sink := NewSink("test-sink", time.Second*5, 1024)
+	sink := NewSink("test-sink", time.Second*5, 1024, 10)
 
 	pipline, err := BuildPipeline().Handler(
 		"log",

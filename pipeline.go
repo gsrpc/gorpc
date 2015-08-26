@@ -46,6 +46,7 @@ type PipelineBuilder struct {
 	creators   []HandlerF // handler creators
 	names      []string   // handler names
 	cachedsize int        // cachedsize
+
 }
 
 // BuildPipeline .
@@ -204,9 +205,9 @@ func (pipeline *_Pipeline) protectCall(handler *_Handler, f func(handler *_Handl
 		if e := recover(); e != nil {
 
 			if _, ok := e.(error); ok {
-				gserrors.Newf(e.(error), "catched pipline exception")
+				err = gserrors.Newf(e.(error), "catched pipline exception")
 			} else {
-				gserrors.Newf(ErrUnknown, "catched pipline exception :%s", e)
+				err = gserrors.Newf(ErrUnknown, "catched pipline exception :%s", e)
 			}
 		}
 
