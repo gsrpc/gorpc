@@ -20,6 +20,8 @@ type Context interface {
 	WriteReadPipline(message *Message)
 	// Write write message into write pipeline
 	WriteWritePipline(message *Message)
+	// GetHandler .
+	GetHandler(name string) (Handler, bool)
 }
 
 // Handler gorpc handler
@@ -39,6 +41,7 @@ type Pipeline interface {
 	Close()
 	ChannelWrite(message *Message) error
 	ChannelRead() (*Message, error)
+	Handler(name string) (Handler, bool)
 }
 
 // PipelineBuilder .
@@ -121,6 +124,10 @@ func (handler *_Handler) Open() error {
 	return handler.pipeline.open(handler.Next)
 }
 
+func (handler *_Handler) GetHandler(name string) (Handler, bool) {
+	return handler.pipeline.Handler(name)
+}
+
 // _Pipeline .
 type _Pipeline struct {
 	gslogger.Log                               // Mixin log APIs
@@ -131,6 +138,21 @@ type _Pipeline struct {
 	readQ        chan func() (*Message, error) // message readQ
 	writeQ       chan func() error             // message readQ
 	refcounter   int32                         // refcounter
+}
+
+func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
+
+	current := pipeline.header
+
+	for current != nil {
+		if current.name == name {
+			return current, true
+		}
+
+		current = current.Next
+	}
+
+	return nil, false
 }
 
 func (pipeline *_Pipeline) String() string {

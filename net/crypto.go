@@ -84,10 +84,16 @@ func PKCS5UnPadding(origData []byte) []byte {
 	return origData[:(length - unpadding)]
 }
 
+// CryptoServer .
+type CryptoServer interface {
+	GetDevice() *gorpc.Device
+}
+
 type _CryptoServer struct {
 	gslogger.Log               // Mixin Log APIs
 	resovler     DHKeyResolver // resolver
 	block        cipher.Block  // cipher block
+	device       *gorpc.Device // client device id
 }
 
 // NewCryptoServer .
@@ -99,11 +105,15 @@ func NewCryptoServer(resovler DHKeyResolver) gorpc.Handler {
 }
 
 func (handler *_CryptoServer) OpenHandler(context gorpc.Context) error {
-	return nil
+	return gorpc.ErrSkip
 }
 
 func (handler *_CryptoServer) CloseHandler(context gorpc.Context) {
 
+}
+
+func (handler *_CryptoServer) GetDevice() *gorpc.Device {
+	return handler.device
 }
 
 func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
@@ -165,7 +175,9 @@ func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.
 
 		handler.I("handshake -- success")
 
-		return nil, nil
+		handler.device = whoAmI.ID
+
+		return nil, context.Open()
 
 	}
 
