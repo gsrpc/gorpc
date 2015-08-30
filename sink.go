@@ -23,13 +23,24 @@ type _Promise struct {
 	timer   *time.Timer
 }
 
-func newPromise(timeout time.Duration) *_Promise {
+// Promise .
+type Promise interface {
+	Wait() (callReturn *Response, err error)
+	Notify(callReturn *Response, err error)
+	Timeout()
+	Cancel()
+}
+
+// NewPromise .
+func NewPromise(timeout time.Duration, f func()) Promise {
 	promise := &_Promise{
 		promise: make(chan *Response, 1),
 	}
 
 	promise.timer = time.AfterFunc(timeout, func() {
+		f()
 		promise.Timeout()
+
 	})
 
 	return promise
@@ -66,7 +77,7 @@ type _Sink struct {
 	timeout      time.Duration         // timeout
 	seqID        uint16                // sequence id
 	dispatchers  map[uint16]Dispatcher // register dispatchers
-	promises     map[uint16]*_Promise  // rpc promise
+	promises     map[uint16]Promise    // rpc promise
 	cached       chan *Message         // cached message
 	cachedTask   chan func()           // cached task
 	processors   int                   // task processors
@@ -79,7 +90,7 @@ func NewSink(name string, timeout time.Duration, cached int, processors int) Sin
 		name:        name,
 		timeout:     timeout,
 		dispatchers: make(map[uint16]Dispatcher),
-		promises:    make(map[uint16]*_Promise),
+		promises:    make(map[uint16]Promise),
 		cached:      make(chan *Message, cached),
 		cachedTask:  make(chan func(), cached),
 		processors:  processors,
@@ -107,7 +118,12 @@ func (sink *_Sink) Promise() (Promise, uint16) {
 			continue
 		}
 
-		promise := newPromise(sink.timeout)
+		promise := NewPromise(sink.timeout, func() {
+			sink.Lock()
+			defer sink.Unlock()
+
+			delete(sink.promises, seqID)
+		})
 
 		sink.promises[seqID] = promise
 
@@ -187,7 +203,8 @@ func (sink *_Sink) dispatchResponse(response *Response) {
 	defer sink.Unlock()
 
 	if promise, ok := sink.promises[response.ID]; ok {
-		promise.Notify(response, nil)
+		go promise.Notify(response, nil)
+		delete(sink.promises, response.ID)
 		return
 	}
 

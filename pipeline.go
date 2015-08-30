@@ -146,7 +146,7 @@ func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
 
 	for current != nil {
 		if current.name == name {
-			return current, true
+			return current.Handler, true
 		}
 
 		current = current.Next
