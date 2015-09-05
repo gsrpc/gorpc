@@ -86,8 +86,8 @@ func ReadInt32(reader Reader) (int32, error) {
 	return int32(v), err
 }
 
-//ReadUint64 read uint16 from Reader interface
-func ReadUint64(reader Reader) (uint64, error) {
+//ReadUInt64 read uint16 from Reader interface
+func ReadUInt64(reader Reader) (uint64, error) {
 	buf := make([]byte, 8)
 	_, err := reader.Read(buf)
 
@@ -106,7 +106,7 @@ func ReadUint64(reader Reader) (uint64, error) {
 
 //ReadInt64 read int16 from Reader interface
 func ReadInt64(reader Reader) (int64, error) {
-	v, err := ReadUint64(reader)
+	v, err := ReadUInt64(reader)
 
 	return int64(v), err
 }
@@ -124,7 +124,7 @@ func ReadFloat32(reader Reader) (float32, error) {
 
 //ReadFloat64 read float64 from Reader interface
 func ReadFloat64(reader Reader) (float64, error) {
-	x, err := ReadUint64(reader)
+	x, err := ReadUInt64(reader)
 	if err != nil {
 		return 0, err
 	}
@@ -252,8 +252,8 @@ func WriteInt32(writer Writer, v int32) error {
 	return nil
 }
 
-//WriteUint64 write a little-endian uint64 into a writer stream
-func WriteUint64(writer Writer, v uint64) error {
+//WriteUInt64 write a little-endian uint64 into a writer stream
+func WriteUInt64(writer Writer, v uint64) error {
 	for i := uint(0); i < 8; i++ {
 		if err := WriteByte(writer, byte(v>>(i*8))); err != nil {
 			return err
@@ -281,7 +281,7 @@ func WriteFloat32(writer Writer, n float32) error {
 
 //WriteFloat64 write a little-endian int64 into a writer stream
 func WriteFloat64(writer Writer, n float64) error {
-	return WriteUint64(writer, math.Float64bits(n))
+	return WriteUInt64(writer, math.Float64bits(n))
 }
 
 //WriteString write string into stream
