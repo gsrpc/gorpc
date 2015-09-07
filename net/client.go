@@ -121,9 +121,10 @@ func (client *TCPClient) close(conn net.Conn) {
 
 	client.pipeline = nil
 
-	client.state = gorpc.StateDisconnect
+	if client.retry != 0 && client.state != gorpc.StateClosed {
 
-	if client.retry != 0 {
+		client.state = gorpc.StateDisconnect
+
 		go client.Connect(client.retry)
 	}
 

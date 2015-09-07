@@ -52,16 +52,16 @@ func (promise *_Promise) Wait() (callReturn *Response, err error) {
 
 func (promise *_Promise) Notify(callReturn *Response, err error) {
 
+	promise.timer.Stop()
+
 	promise.err = err
 
 	promise.promise <- callReturn
-
-	close(promise.promise)
 }
 
 func (promise *_Promise) Timeout() {
 	promise.err = ErrTimeout
-	close(promise.promise)
+	promise.promise <- nil
 }
 
 func (promise *_Promise) Cancel() {
