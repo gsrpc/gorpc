@@ -81,6 +81,7 @@ type _Sink struct {
 	cached       chan *Message         // cached message
 	cachedTask   chan func()           // cached task
 	processors   int                   // task processors
+	closedflag   bool                  // closed flag
 }
 
 // NewSink .
@@ -297,9 +298,17 @@ func (sink *_Sink) protectedCall(f func()) {
 }
 
 func (sink *_Sink) CloseHandler(context Context) {
+
+	if sink.closedflag {
+		return
+	}
+
+	sink.closedflag = true
+
 	close(sink.cached)
 	close(sink.cachedTask)
 }
+
 func (sink *_Sink) HandleError(context Context, err error) error {
 	return err
 }
