@@ -79,13 +79,11 @@ type _Sink struct {
 	dispatchers  map[uint16]Dispatcher // register dispatchers
 	promises     map[uint16]Promise    // rpc promise
 	cached       chan *Message         // cached message
-	cachedTask   chan func()           // cached task
-	processors   int                   // task processors
-	closedflag   bool                  // closed flag
+	closed       chan bool             // closed
 }
 
 // NewSink .
-func NewSink(name string, timeout time.Duration, cached int, processors int) Sink {
+func NewSink(name string, timeout time.Duration, cached int) Sink {
 	return &_Sink{
 		Log:         gslogger.Get("sink"),
 		name:        name,
@@ -93,8 +91,6 @@ func NewSink(name string, timeout time.Duration, cached int, processors int) Sin
 		dispatchers: make(map[uint16]Dispatcher),
 		promises:    make(map[uint16]Promise),
 		cached:      make(chan *Message, cached),
-		cachedTask:  make(chan func(), cached),
-		processors:  processors,
 	}
 }
 
@@ -264,49 +260,30 @@ func (sink *_Sink) dispatchRequest(message *Message) error {
 
 func (sink *_Sink) OpenHandler(context Context) error {
 
-	go func() {
-		for message := range sink.cached {
-			context.WriteReadPipline(message)
-		}
-	}()
+	closed := make(chan bool)
 
-	for i := 0; i < sink.processors; i++ {
-		go func() {
-			for f := range sink.cachedTask {
-				sink.protectedCall(f)
+	sink.closed = closed
+
+	go func() {
+		for {
+			select {
+			case message := <-sink.cached:
+				context.WriteReadPipline(message)
+			case <-closed:
+				return
 			}
-		}()
-	}
+		}
+
+	}()
 
 	return nil
 }
 
-func (sink *_Sink) protectedCall(f func()) {
-
-	defer func() {
-		if e := recover(); e != nil {
-
-			if _, ok := e.(error); ok {
-				sink.E("%s", gserrors.Newf(e.(error), "catched exception"))
-			} else {
-				sink.E("%s", gserrors.Newf(ErrUnknown, "catched exception :%s", e))
-			}
-		}
-	}()
-
-	f()
-}
-
 func (sink *_Sink) CloseHandler(context Context) {
-
-	if sink.closedflag {
-		return
+	if sink.closed != nil {
+		close(sink.closed)
+		sink.closed = nil
 	}
-
-	sink.closedflag = true
-
-	close(sink.cached)
-	close(sink.cachedTask)
 }
 
 func (sink *_Sink) HandleError(context Context, err error) error {
@@ -317,32 +294,12 @@ func (sink *_Sink) HandleRead(context Context, message *Message) (*Message, erro
 	return message, nil
 }
 
-func (sink *_Sink) pushTask(f func()) (err error) {
-	defer func() {
-		if e := recover(); e != nil {
-			err = ErrClosed
-		}
-	}()
-
-	select {
-	case sink.cachedTask <- f:
-	default:
-		err = gserrors.Newf(ErrOverflow, "sink task(%s) task cached overflow", sink)
-	}
-
-	return
-}
-
 func (sink *_Sink) HandleWrite(context Context, message *Message) (*Message, error) {
 
 	switch message.Code {
 	case CodeRequest:
 
-		err := sink.pushTask(func() { sink.dispatchRequest(message) })
-
-		if err != nil {
-			return nil, err
-		}
+		sink.dispatchRequest(message)
 
 		return nil, nil
 
@@ -355,11 +312,7 @@ func (sink *_Sink) HandleWrite(context Context, message *Message) (*Message, err
 			return nil, err
 		}
 
-		err = sink.pushTask(func() { sink.dispatchResponse(response) })
-
-		if err != nil {
-			return nil, err
-		}
+		sink.dispatchResponse(response)
 
 		return nil, nil
 

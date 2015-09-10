@@ -106,6 +106,14 @@ type _Handler struct {
 	Next       *_Handler  // list next node
 	Prev       *_Handler  // list prev node
 	pipeline   *_Pipeline // pipline belongs
+	closed     bool       // closed
+}
+
+func (handler *_Handler) _Close() {
+	if !handler.closed {
+		handler.CloseHandler(handler)
+		handler.closed = true
+	}
 }
 
 func (handler *_Handler) String() string {
@@ -223,19 +231,17 @@ func (pipeline *_Pipeline) Close() {
 
 	close(pipeline.readQ)
 
-	go func() {
+	context := pipeline.header
 
-		pipeline.V("close handlers ...")
+	for context != nil {
 
-		pipeline.foreach(func(handler *_Handler) error {
-
-			handler.CloseHandler(handler)
-
+		pipeline.protectCall(context, func(handler *_Handler) error {
+			handler._Close()
 			return nil
 		})
 
-		pipeline.V("close handlers -- success ")
-	}()
+		context = context.Next
+	}
 }
 
 func (pipeline *_Pipeline) protectCall(handler *_Handler, f func(handler *_Handler) error) (err error) {
@@ -246,27 +252,6 @@ func (pipeline *_Pipeline) protectCall(handler *_Handler, f func(handler *_Handl
 	err = f(handler)
 
 	return
-}
-
-func (pipeline *_Pipeline) foreach(f func(handler *_Handler) error) error {
-
-	context := pipeline.header
-
-	for context != nil {
-
-		err := pipeline.protectCall(context, f)
-
-		if err != nil {
-			if err == ErrSkip {
-				return nil
-			}
-			return err
-		}
-
-		context = context.Next
-	}
-
-	return nil
 }
 
 func (pipeline *_Pipeline) open(handler *_Handler) (err error) {
@@ -338,12 +323,6 @@ func (pipeline *_Pipeline) writeWritePipline(handler *_Handler, message *Message
 
 func (pipeline *_Pipeline) handleWrite(handler *_Handler, message *Message) error {
 
-	if err := pipeline.lock(); err != nil {
-		return err
-	}
-
-	defer pipeline.unlock()
-
 	var err error
 
 	context := handler
@@ -382,12 +361,6 @@ func (pipeline *_Pipeline) handleWrite(handler *_Handler, message *Message) erro
 }
 
 func (pipeline *_Pipeline) handleRead(handler *_Handler, message *Message) (*Message, error) {
-
-	if err := pipeline.lock(); err != nil {
-		return nil, err
-	}
-
-	defer pipeline.unlock()
 
 	var err error
 
@@ -486,18 +459,4 @@ func (pipeline *_Pipeline) addHandler(name string, handler Handler) *_Handler {
 	pipeline.tail = pipeline.tail.Next
 
 	return pipeline.tail
-}
-
-func (pipeline *_Pipeline) lock() error {
-	if atomic.AddInt32(&pipeline.refcounter, 1) > 1 {
-		return nil
-	}
-
-	atomic.AddInt32(&pipeline.refcounter, -1)
-
-	return ErrClosed
-}
-
-func (pipeline *_Pipeline) unlock() {
-	atomic.AddInt32(&pipeline.refcounter, -1)
 }
