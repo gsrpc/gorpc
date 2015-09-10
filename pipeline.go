@@ -206,6 +206,12 @@ func (pipeline *_Pipeline) ChannelRead() (*Message, error) {
 
 func (pipeline *_Pipeline) Close() {
 
+	defer func() {
+		if e := recover(); e != nil {
+			pipeline.W("%s", gserrors.Newf(nil, "catched unhandler exception\n%s", e))
+		}
+	}()
+
 	if err := pipeline.lock(); err != nil {
 		return
 	}
