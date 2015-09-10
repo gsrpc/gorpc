@@ -24,9 +24,9 @@ type TCPClient struct {
 }
 
 // NewTCPClient create new tcp client
-func NewTCPClient(raddr string, builder *gorpc.PipelineBuilder) *TCPClient {
+func NewTCPClient(name string, raddr string, builder *gorpc.PipelineBuilder) *TCPClient {
 	client := &TCPClient{
-		name:    raddr,
+		name:    name,
 		Log:     gslogger.Get("rpc-tcp-client"),
 		raddr:   raddr,
 		state:   gorpc.StateDisconnect,
@@ -58,7 +58,7 @@ func (client *TCPClient) Connect(retry time.Duration) *TCPClient {
 			client.state = gorpc.StateDisconnect
 			client.Unlock()
 
-			client.E("connect server error\n%s", gserrors.New(err))
+			client.E("%s connect server error:%s", client.name, gserrors.New(err))
 
 			if retry != 0 {
 				time.AfterFunc(retry, func() {

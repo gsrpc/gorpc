@@ -123,7 +123,7 @@ func (server *TCPServer) newChannel(conn net.Conn) (err error) {
 		state: gorpc.StateConnected,
 	}
 
-	channel.pipeline, err = server.builder.Build(server.name)
+	channel.pipeline, err = server.builder.Build(conn.RemoteAddr().String())
 
 	if err != nil {
 		return err

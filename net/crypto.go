@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/gsdocker/gserrors"
@@ -15,7 +16,25 @@ import (
 	"github.com/gsrpc/gorpc"
 )
 
-var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+type lockedSource struct {
+	lk  sync.Mutex
+	src rand.Source
+}
+
+func (r *lockedSource) Int63() (n int64) {
+	r.lk.Lock()
+	n = r.src.Int63()
+	r.lk.Unlock()
+	return
+}
+
+func (r *lockedSource) Seed(seed int64) {
+	r.lk.Lock()
+	r.src.Seed(seed)
+	r.lk.Unlock()
+}
+
+var rng = rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())})
 
 //DHKey 通过Diffie-Hellman算法生成共享密钥
 type DHKey struct {
@@ -173,7 +192,7 @@ func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.
 
 		handler.block = block
 
-		handler.I("handshake -- success")
+		handler.I("%s handshake -- success", context.Source())
 
 		handler.device = whoAmI.ID
 
@@ -346,7 +365,7 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 
 		handler.block = block
 
-		handler.I("handshake -- success")
+		handler.I("%s handshake -- success", context.Source())
 
 		return nil, context.Open()
 	}

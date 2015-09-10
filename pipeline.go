@@ -11,6 +11,9 @@ import (
 
 // Context .
 type Context interface {
+	// Source get pipeline source
+	Source() string
+
 	String() string
 
 	Close()
@@ -39,6 +42,7 @@ type HandlerF func() Handler
 // Pipeline .
 type Pipeline interface {
 	Close()
+	Source() string
 	ChannelWrite(message *Message) error
 	ChannelRead() (*Message, error)
 	Handler(name string) (Handler, bool)
@@ -108,6 +112,10 @@ func (handler *_Handler) String() string {
 	return handler.name
 }
 
+func (handler *_Handler) Source() string {
+	return handler.pipeline.Source()
+}
+
 func (handler *_Handler) Close() {
 	handler.pipeline.Close()
 }
@@ -138,6 +146,10 @@ type _Pipeline struct {
 	readQ        chan func() (*Message, error) // message readQ
 	writeQ       chan func() error             // message readQ
 	refcounter   int32                         // refcounter
+}
+
+func (pipeline *_Pipeline) Source() string {
+	return pipeline.name
 }
 
 func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
