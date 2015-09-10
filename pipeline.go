@@ -241,17 +241,17 @@ func (pipeline *_Pipeline) Close() {
 
 func (pipeline *_Pipeline) protectCall(handler *_Handler, f func(handler *_Handler) error) (err error) {
 
-	defer func() {
-		if e := recover(); e != nil {
-
-			if _, ok := e.(error); ok {
-				err = gserrors.Newf(e.(error), "catched pipline exception")
-			} else {
-				err = gserrors.Newf(ErrUnknown, "catched pipline exception :%s", e)
-			}
-		}
-
-	}()
+	// defer func() {
+	// 	if e := recover(); e != nil {
+	//
+	// 		if _, ok := e.(error); ok {
+	// 			err = gserrors.Newf(e.(error), "catched pipline exception")
+	// 		} else {
+	// 			err = gserrors.Newf(ErrUnknown, "catched pipline exception :%s", e)
+	// 		}
+	// 	}
+	//
+	// }()
 
 	handler.Lock()
 	defer handler.Unlock()
