@@ -297,6 +297,9 @@ func (sink *_Sink) protectedCall(f func()) {
 }
 
 func (sink *_Sink) CloseHandler(context Context) {
+
+	defer recover()
+
 	close(sink.cached)
 	close(sink.cachedTask)
 }
