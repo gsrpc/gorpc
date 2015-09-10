@@ -1,5 +1,7 @@
 package gorpc
 
+import "fmt"
+
 func (device *Device) String() string {
-	return device.ID
+	return fmt.Sprintf("%s-%s-%s", device.ID, device.OS, device.OSVersion)
 }
