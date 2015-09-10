@@ -191,21 +191,16 @@ func (channel *_TCPChannel) close(conn net.Conn) {
 	channel.Lock()
 	defer channel.Unlock()
 
-	if conn != nil {
+	if channel.conn != nil {
 		channel.I("close tcp connection %s(%p)", conn.RemoteAddr(), conn)
-		conn.Close()
-	}
-
-	if channel.state != gorpc.StateConnected && channel.conn != conn {
-		return
+		channel.conn.Close()
+		channel.conn = nil
 	}
 
 	if channel.pipeline != nil {
 		channel.pipeline.Close()
 		channel.I("close  pipeline %s(%p)", channel.name, channel.pipeline)
+		channel.pipeline = nil
 	}
 
-	channel.conn = nil
-
-	channel.pipeline = nil
 }
