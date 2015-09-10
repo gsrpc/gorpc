@@ -48,7 +48,7 @@ func (handler *_HeartbeatHandler) timeoutLoop() {
 		case <-ticker.C:
 
 			if time.Now().Sub(handler.timestamp) > handler.timeout*2 {
-				//handler.context.Close()
+				handler.context.Close()
 				handler.W("heartbeat timeout(%s), close current pipeline(%s)", handler.timeout*2, handler.context.Source())
 				return
 			}
