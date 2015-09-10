@@ -120,14 +120,14 @@ func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.
 
 	if handler.block == nil {
 
-		handler.D("expect WhoAmI message")
+		handler.V("expect WhoAmI message")
 		// expect whoAmI message
 		if message.Code != gorpc.CodeWhoAmI {
 			context.Close()
 			return nil, gserrors.Newf(gorpc.ErrRPC, "expect WhoAmI message but got(%s)", message.Code)
 		}
 
-		handler.D("parse WhoAmI message")
+		handler.V("parse WhoAmI message")
 
 		whoAmI, err := gorpc.ReadWhoAmI(bytes.NewBuffer(message.Content))
 
@@ -162,7 +162,7 @@ func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.
 
 		binary.BigEndian.PutUint64(key[:8], keyval)
 
-		handler.D("shared key \n\t%d\n\t%v ", keyval, key)
+		handler.V("shared key \n\t%d\n\t%v ", keyval, key)
 
 		block, err := des.NewCipher(key)
 
@@ -272,7 +272,7 @@ func (handler *_CryptoClient) OpenHandler(context gorpc.Context) error {
 
 	message.Content = buff.Bytes()
 
-	handler.D("send whoAmI handshake")
+	handler.V("send whoAmI handshake")
 
 	context.WriteReadPipline(message)
 
@@ -311,7 +311,7 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 
 	if handler.block == nil {
 
-		handler.D("expect handshake accept")
+		handler.V("expect handshake accept")
 
 		if message.Code != gorpc.CodeAccept {
 
@@ -320,7 +320,7 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 			return nil, gserrors.Newf(gorpc.ErrRPC, "expect handshake(Accept) but got(%s)", message.Code)
 		}
 
-		handler.D("parse handshake accept")
+		handler.V("parse handshake accept")
 
 		val, ok := new(big.Int).SetString(string(message.Content), 0)
 
@@ -335,7 +335,7 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 
 		binary.BigEndian.PutUint64(key[:8], keyval)
 
-		handler.D("shared key \n\t%d\n\t%v ", keyval, key)
+		handler.V("shared key \n\t%d\n\t%v ", keyval, key)
 
 		block, err := des.NewCipher(key)
 

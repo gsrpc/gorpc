@@ -82,7 +82,7 @@ func (server *TCPServer) Listen(laddr string) error {
 			return gserrors.Newf(err, "tcp(%s) accept error", laddr)
 		}
 
-		server.D("accept connection(%s)", conn.RemoteAddr())
+		server.V("accept connection(%s)", conn.RemoteAddr())
 
 		//async handle new accept connection
 		go server.newChannel(conn)
@@ -94,7 +94,7 @@ func (server *TCPServer) Close() {
 	server.Lock()
 	defer server.Unlock()
 
-	server.D("close server(%v)", server.listener)
+	server.V("close server(%v)", server.listener)
 
 	if server.listener != nil {
 		server.listener.Close()
