@@ -59,7 +59,7 @@ type PipelineBuilder struct {
 // BuildPipeline .
 func BuildPipeline() *PipelineBuilder {
 	return &PipelineBuilder{
-		cachedsize: gsconfig.Int("gorpc.pipeline.cached", 1024),
+		cachedsize: gsconfig.Int("gorpc.pipeline.cached", 8),
 	}
 }
 
