@@ -138,6 +138,7 @@ func (handler *_Handler) GetHandler(name string) (Handler, bool) {
 
 // _Pipeline .
 type _Pipeline struct {
+	sync.Mutex                                 // Mutex
 	gslogger.Log                               // Mixin log APIs
 	name         string                        // pipline name
 	header       *_Handler                     // handler list header
@@ -146,6 +147,7 @@ type _Pipeline struct {
 	readQ        chan func() (*Message, error) // message readQ
 	writeQ       chan func() error             // message readQ
 	refcounter   int32                         // refcounter
+	closed       bool                          // closed
 }
 
 func (pipeline *_Pipeline) Source() string {
@@ -206,17 +208,14 @@ func (pipeline *_Pipeline) ChannelRead() (*Message, error) {
 
 func (pipeline *_Pipeline) Close() {
 
-	defer func() {
-		if e := recover(); e != nil {
-			pipeline.W("%s", gserrors.Newf(nil, "catched unhandler exception\n%s", e))
-		}
-	}()
+	pipeline.Lock()
+	defer pipeline.Unlock()
 
-	if err := pipeline.lock(); err != nil {
+	if pipeline.closed {
 		return
 	}
 
-	defer pipeline.unlock()
+	pipeline.closed = true
 
 	atomic.AddInt32(&pipeline.refcounter, -1)
 
