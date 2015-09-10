@@ -17,7 +17,6 @@ type TCPServer struct {
 	sync.RWMutex                        // Mixin mutex
 	name         string                 // server name
 	timeout      time.Duration          // net trans timeout
-	cachsize     int                    // cached size
 	listener     net.Listener           // listener
 	builder      *gorpc.PipelineBuilder // router builder
 }
@@ -25,11 +24,10 @@ type TCPServer struct {
 // NewTCPServer create new tcp server
 func NewTCPServer(builder *gorpc.PipelineBuilder) *TCPServer {
 	return &TCPServer{
-		name:     "rpc-tcp-server",
-		Log:      gslogger.Get("rpc-tcp-server"),
-		timeout:  gsconfig.Seconds("gorpc.timeout", 5),
-		builder:  builder,
-		cachsize: gsconfig.Int("gorpc.cachesize", 1024),
+		name:    "rpc-tcp-server",
+		Log:     gslogger.Get("rpc-tcp-server"),
+		timeout: gsconfig.Seconds("gorpc.timeout", 5),
+		builder: builder,
 	}
 }
 
@@ -42,12 +40,6 @@ func (server *TCPServer) Name(name string) *TCPServer {
 // Timeout .
 func (server *TCPServer) Timeout(timeout time.Duration) *TCPServer {
 	server.timeout = timeout
-	return server
-}
-
-// CacheSzie .
-func (server *TCPServer) CacheSzie(size int) *TCPServer {
-	server.cachsize = size
 	return server
 }
 
