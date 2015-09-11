@@ -15,13 +15,12 @@
 
     "properties":{
         "gsrpc":{
-            "test":["github.com/gsrpc/gsrpc/test/test.gs"]
+            "test":["github.com/gsrpc/gsrpc","github.com/gsrpc/gsrpc/test/test.gs"]
         },
 
         "gsmake.golang.test" :[
            {"dir":"./test","flags":"-bench . -cpu 4 "},
-           {"dir":"./net","flags":"-bench . -cpu 4 "},
-           {"dir":"./","flags":"-bench . -cpu 4 "}
+           {"dir":"./timer","flags":"-bench . -cpu 4 "}
         ]
     }
 }
