@@ -23,13 +23,24 @@ type _Promise struct {
 	timer   *time.Timer
 }
 
-func newPromise(timeout time.Duration) *_Promise {
+// Promise .
+type Promise interface {
+	Wait() (callReturn *Response, err error)
+	Notify(callReturn *Response, err error)
+	Timeout()
+	Cancel()
+}
+
+// NewPromise .
+func NewPromise(timeout time.Duration, f func()) Promise {
 	promise := &_Promise{
 		promise: make(chan *Response, 1),
 	}
 
 	promise.timer = time.AfterFunc(timeout, func() {
+		f()
 		promise.Timeout()
+
 	})
 
 	return promise
@@ -41,16 +52,16 @@ func (promise *_Promise) Wait() (callReturn *Response, err error) {
 
 func (promise *_Promise) Notify(callReturn *Response, err error) {
 
+	promise.timer.Stop()
+
 	promise.err = err
 
 	promise.promise <- callReturn
-
-	close(promise.promise)
 }
 
 func (promise *_Promise) Timeout() {
 	promise.err = ErrTimeout
-	close(promise.promise)
+	promise.promise <- nil
 }
 
 func (promise *_Promise) Cancel() {
@@ -66,8 +77,9 @@ type _Sink struct {
 	timeout      time.Duration         // timeout
 	seqID        uint16                // sequence id
 	dispatchers  map[uint16]Dispatcher // register dispatchers
-	promises     map[uint16]*_Promise  // rpc promise
+	promises     map[uint16]Promise    // rpc promise
 	cached       chan *Message         // cached message
+	closed       chan bool             // closed
 }
 
 // NewSink .
@@ -77,7 +89,7 @@ func NewSink(name string, timeout time.Duration, cached int) Sink {
 		name:        name,
 		timeout:     timeout,
 		dispatchers: make(map[uint16]Dispatcher),
-		promises:    make(map[uint16]*_Promise),
+		promises:    make(map[uint16]Promise),
 		cached:      make(chan *Message, cached),
 	}
 }
@@ -103,7 +115,12 @@ func (sink *_Sink) Promise() (Promise, uint16) {
 			continue
 		}
 
-		promise := newPromise(sink.timeout)
+		promise := NewPromise(sink.timeout, func() {
+			sink.Lock()
+			defer sink.Unlock()
+
+			delete(sink.promises, seqID)
+		})
 
 		sink.promises[seqID] = promise
 
@@ -143,13 +160,21 @@ func (sink *_Sink) Send(call *Request) (Future, error) {
 	return promise, nil
 }
 
-func (sink *_Sink) SendMessage(message *Message) error {
+func (sink *_Sink) SendMessage(message *Message) (err error) {
+
+	defer func() {
+		if e := recover(); e != nil {
+			err = ErrClosed
+		}
+	}()
+
 	select {
 	case sink.cached <- message:
-		return nil
 	default:
-		return gserrors.Newf(ErrOverflow, "sink(%s) cached overflow", sink)
+		err = gserrors.Newf(ErrOverflow, "sink(%s) cached overflow", sink)
 	}
+
+	return
 }
 
 // Register .
@@ -175,24 +200,39 @@ func (sink *_Sink) dispatchResponse(response *Response) {
 	defer sink.Unlock()
 
 	if promise, ok := sink.promises[response.ID]; ok {
-		promise.Notify(response, nil)
+		go promise.Notify(response, nil)
+		delete(sink.promises, response.ID)
 		return
 	}
 
-	sink.W("unhandle response(%d)(%d:)", response.ID, response.Service)
+	sink.W("unhandle response(%d)(%d)", response.ID, response.Service)
 }
 
-func (sink *_Sink) dispatchRequest(request *Request) {
+func (sink *_Sink) dispatch(id uint16) (dispatcher Dispatcher, ok bool) {
 	sink.RLock()
 	defer sink.RUnlock()
 
-	if dispatcher, ok := sink.dispatchers[request.Service]; ok {
+	dispatcher, ok = sink.dispatchers[id]
+
+	return
+}
+
+func (sink *_Sink) dispatchRequest(message *Message) error {
+
+	request, err := ReadRequest(bytes.NewBuffer(message.Content))
+
+	if err != nil {
+		sink.E("[%s] unmarshal request error\n%s", sink.name, err)
+		return err
+	}
+
+	if dispatcher, ok := sink.dispatch(request.Service); ok {
 
 		response, err := dispatcher.Dispatch(request)
 
 		if err != nil {
 			sink.E("dispatch request(%d)(%d:%d) error\n%s", request.ID, request.Service, request.Method, err)
-			return
+			return nil
 		}
 
 		var buff bytes.Buffer
@@ -201,10 +241,8 @@ func (sink *_Sink) dispatchRequest(request *Request) {
 
 		if err != nil {
 			sink.E("marshal request(%d)(%d:%d)'s response error\n%s", request.ID, request.Service, request.Method, err)
-			return
+			return nil
 		}
-
-		message := NewMessage()
 
 		message.Code = CodeResponse
 
@@ -212,25 +250,42 @@ func (sink *_Sink) dispatchRequest(request *Request) {
 
 		go sink.SendMessage(message)
 
-		return
+		return nil
 	}
 
 	sink.W("[%s] unhandle request(%d)(%d:%d)", sink.name, request.ID, request.Service, request.Method)
+
+	return nil
 }
 
 func (sink *_Sink) OpenHandler(context Context) error {
 
+	closed := make(chan bool)
+
+	sink.closed = closed
+
 	go func() {
-		for message := range sink.cached {
-			context.WriteReadPipline(message)
+		for {
+			select {
+			case message := <-sink.cached:
+				context.WriteReadPipline(message)
+			case <-closed:
+				return
+			}
 		}
+
 	}()
 
 	return nil
 }
+
 func (sink *_Sink) CloseHandler(context Context) {
-	close(sink.cached)
+	if sink.closed != nil {
+		close(sink.closed)
+		sink.closed = nil
+	}
 }
+
 func (sink *_Sink) HandleError(context Context, err error) error {
 	return err
 }
@@ -244,24 +299,11 @@ func (sink *_Sink) HandleWrite(context Context, message *Message) (*Message, err
 	switch message.Code {
 	case CodeRequest:
 
-		sink.D("[%s] request ", sink.name)
-
-		request, err := ReadRequest(bytes.NewBuffer(message.Content))
-
-		if err != nil {
-			sink.E("[%s] unmarshal request error\n%s", sink.name, err)
-			return nil, err
-		}
-
-		sink.dispatchRequest(request)
-
-		sink.D("[%s] request -- success", sink.name)
+		sink.dispatchRequest(message)
 
 		return nil, nil
 
 	case CodeResponse:
-
-		sink.D("[%s]response ", sink.name)
 
 		response, err := ReadResponse(bytes.NewBuffer(message.Content))
 
@@ -271,8 +313,6 @@ func (sink *_Sink) HandleWrite(context Context, message *Message) (*Message, err
 		}
 
 		sink.dispatchResponse(response)
-
-		sink.D("[%s] response -- success", sink.name)
 
 		return nil, nil
 

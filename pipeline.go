@@ -11,6 +11,9 @@ import (
 
 // Context .
 type Context interface {
+	// Source get pipeline source
+	Source() string
+
 	String() string
 
 	Close()
@@ -20,6 +23,8 @@ type Context interface {
 	WriteReadPipline(message *Message)
 	// Write write message into write pipeline
 	WriteWritePipline(message *Message)
+	// GetHandler .
+	GetHandler(name string) (Handler, bool)
 }
 
 // Handler gorpc handler
@@ -37,8 +42,10 @@ type HandlerF func() Handler
 // Pipeline .
 type Pipeline interface {
 	Close()
+	Source() string
 	ChannelWrite(message *Message) error
 	ChannelRead() (*Message, error)
+	Handler(name string) (Handler, bool)
 }
 
 // PipelineBuilder .
@@ -46,12 +53,13 @@ type PipelineBuilder struct {
 	creators   []HandlerF // handler creators
 	names      []string   // handler names
 	cachedsize int        // cachedsize
+
 }
 
 // BuildPipeline .
 func BuildPipeline() *PipelineBuilder {
 	return &PipelineBuilder{
-		cachedsize: gsconfig.Int("gorpc.pipeline.cached", 1024),
+		cachedsize: gsconfig.Int("gorpc.pipeline.cached", 8),
 	}
 }
 
@@ -98,10 +106,22 @@ type _Handler struct {
 	Next       *_Handler  // list next node
 	Prev       *_Handler  // list prev node
 	pipeline   *_Pipeline // pipline belongs
+	closed     bool       // closed
+}
+
+func (handler *_Handler) _Close() {
+	if !handler.closed {
+		handler.CloseHandler(handler)
+		handler.closed = true
+	}
 }
 
 func (handler *_Handler) String() string {
 	return handler.name
+}
+
+func (handler *_Handler) Source() string {
+	return handler.pipeline.Source()
 }
 
 func (handler *_Handler) Close() {
@@ -120,8 +140,13 @@ func (handler *_Handler) Open() error {
 	return handler.pipeline.open(handler.Next)
 }
 
+func (handler *_Handler) GetHandler(name string) (Handler, bool) {
+	return handler.pipeline.Handler(name)
+}
+
 // _Pipeline .
 type _Pipeline struct {
+	sync.Mutex                                 // Mutex
 	gslogger.Log                               // Mixin log APIs
 	name         string                        // pipline name
 	header       *_Handler                     // handler list header
@@ -130,6 +155,26 @@ type _Pipeline struct {
 	readQ        chan func() (*Message, error) // message readQ
 	writeQ       chan func() error             // message readQ
 	refcounter   int32                         // refcounter
+	closed       bool                          // closed
+}
+
+func (pipeline *_Pipeline) Source() string {
+	return pipeline.name
+}
+
+func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
+
+	current := pipeline.header
+
+	for current != nil {
+		if current.name == name {
+			return current.Handler, true
+		}
+
+		current = current.Next
+	}
+
+	return nil, false
 }
 
 func (pipeline *_Pipeline) String() string {
@@ -171,11 +216,14 @@ func (pipeline *_Pipeline) ChannelRead() (*Message, error) {
 
 func (pipeline *_Pipeline) Close() {
 
-	if err := pipeline.lock(); err != nil {
+	pipeline.Lock()
+	defer pipeline.Unlock()
+
+	if pipeline.closed {
 		return
 	}
 
-	defer pipeline.unlock()
+	pipeline.closed = true
 
 	atomic.AddInt32(&pipeline.refcounter, -1)
 
@@ -183,34 +231,20 @@ func (pipeline *_Pipeline) Close() {
 
 	close(pipeline.readQ)
 
-	go func() {
+	context := pipeline.header
 
-		pipeline.V("close handlers ...")
+	for context != nil {
 
-		pipeline.foreach(func(handler *_Handler) error {
-
-			handler.CloseHandler(handler)
-
+		pipeline.protectCall(context, func(handler *_Handler) error {
+			handler._Close()
 			return nil
 		})
 
-		pipeline.V("close handlers -- success ")
-	}()
+		context = context.Next
+	}
 }
 
 func (pipeline *_Pipeline) protectCall(handler *_Handler, f func(handler *_Handler) error) (err error) {
-
-	defer func() {
-		if e := recover(); e != nil {
-
-			if _, ok := e.(error); ok {
-				gserrors.Newf(e.(error), "catched pipline exception")
-			} else {
-				gserrors.Newf(ErrUnknown, "catched pipline exception :%s", e)
-			}
-		}
-
-	}()
 
 	handler.Lock()
 	defer handler.Unlock()
@@ -218,27 +252,6 @@ func (pipeline *_Pipeline) protectCall(handler *_Handler, f func(handler *_Handl
 	err = f(handler)
 
 	return
-}
-
-func (pipeline *_Pipeline) foreach(f func(handler *_Handler) error) error {
-
-	context := pipeline.header
-
-	for context != nil {
-
-		err := pipeline.protectCall(context, f)
-
-		if err != nil {
-			if err == ErrSkip {
-				return nil
-			}
-			return err
-		}
-
-		context = context.Next
-	}
-
-	return nil
 }
 
 func (pipeline *_Pipeline) open(handler *_Handler) (err error) {
@@ -310,12 +323,6 @@ func (pipeline *_Pipeline) writeWritePipline(handler *_Handler, message *Message
 
 func (pipeline *_Pipeline) handleWrite(handler *_Handler, message *Message) error {
 
-	if err := pipeline.lock(); err != nil {
-		return err
-	}
-
-	defer pipeline.unlock()
-
 	var err error
 
 	context := handler
@@ -354,12 +361,6 @@ func (pipeline *_Pipeline) handleWrite(handler *_Handler, message *Message) erro
 }
 
 func (pipeline *_Pipeline) handleRead(handler *_Handler, message *Message) (*Message, error) {
-
-	if err := pipeline.lock(); err != nil {
-		return nil, err
-	}
-
-	defer pipeline.unlock()
 
 	var err error
 
@@ -458,18 +459,4 @@ func (pipeline *_Pipeline) addHandler(name string, handler Handler) *_Handler {
 	pipeline.tail = pipeline.tail.Next
 
 	return pipeline.tail
-}
-
-func (pipeline *_Pipeline) lock() error {
-	if atomic.AddInt32(&pipeline.refcounter, 1) > 1 {
-		return nil
-	}
-
-	atomic.AddInt32(&pipeline.refcounter, -1)
-
-	return ErrClosed
-}
-
-func (pipeline *_Pipeline) unlock() {
-	atomic.AddInt32(&pipeline.refcounter, -1)
 }

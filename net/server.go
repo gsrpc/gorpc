@@ -17,7 +17,6 @@ type TCPServer struct {
 	sync.RWMutex                        // Mixin mutex
 	name         string                 // server name
 	timeout      time.Duration          // net trans timeout
-	cachsize     int                    // cached size
 	listener     net.Listener           // listener
 	builder      *gorpc.PipelineBuilder // router builder
 }
@@ -25,11 +24,10 @@ type TCPServer struct {
 // NewTCPServer create new tcp server
 func NewTCPServer(builder *gorpc.PipelineBuilder) *TCPServer {
 	return &TCPServer{
-		name:     "rpc-tcp-server",
-		Log:      gslogger.Get("rpc-tcp-server"),
-		timeout:  gsconfig.Seconds("gorpc.timeout", 5),
-		builder:  builder,
-		cachsize: gsconfig.Int("gorpc.cachesize", 1024),
+		name:    "rpc-tcp-server",
+		Log:     gslogger.Get("rpc-tcp-server"),
+		timeout: gsconfig.Seconds("gorpc.timeout", 5),
+		builder: builder,
 	}
 }
 
@@ -42,12 +40,6 @@ func (server *TCPServer) Name(name string) *TCPServer {
 // Timeout .
 func (server *TCPServer) Timeout(timeout time.Duration) *TCPServer {
 	server.timeout = timeout
-	return server
-}
-
-// CacheSzie .
-func (server *TCPServer) CacheSzie(size int) *TCPServer {
-	server.cachsize = size
 	return server
 }
 
@@ -82,7 +74,7 @@ func (server *TCPServer) Listen(laddr string) error {
 			return gserrors.Newf(err, "tcp(%s) accept error", laddr)
 		}
 
-		server.D("accept connection(%s)", conn.RemoteAddr())
+		server.V("accept connection(%s)", conn.RemoteAddr())
 
 		//async handle new accept connection
 		go server.newChannel(conn)
@@ -94,7 +86,7 @@ func (server *TCPServer) Close() {
 	server.Lock()
 	defer server.Unlock()
 
-	server.D("close server(%v)", server.listener)
+	server.V("close server(%v)", server.listener)
 
 	if server.listener != nil {
 		server.listener.Close()
@@ -123,7 +115,7 @@ func (server *TCPServer) newChannel(conn net.Conn) (err error) {
 		state: gorpc.StateConnected,
 	}
 
-	channel.pipeline, err = server.builder.Build(server.name)
+	channel.pipeline, err = server.builder.Build(conn.RemoteAddr().String())
 
 	if err != nil {
 		return err
@@ -199,21 +191,16 @@ func (channel *_TCPChannel) close(conn net.Conn) {
 	channel.Lock()
 	defer channel.Unlock()
 
-	if conn != nil {
+	if channel.conn != nil {
 		channel.I("close tcp connection %s(%p)", conn.RemoteAddr(), conn)
-		conn.Close()
-	}
-
-	if channel.state != gorpc.StateConnected && channel.conn != conn {
-		return
+		channel.conn.Close()
+		channel.conn = nil
 	}
 
 	if channel.pipeline != nil {
 		channel.pipeline.Close()
 		channel.I("close  pipeline %s(%p)", channel.name, channel.pipeline)
+		channel.pipeline = nil
 	}
 
-	channel.conn = nil
-
-	channel.pipeline = nil
 }

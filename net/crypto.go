@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/gsdocker/gserrors"
@@ -15,7 +16,25 @@ import (
 	"github.com/gsrpc/gorpc"
 )
 
-var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+type lockedSource struct {
+	lk  sync.Mutex
+	src rand.Source
+}
+
+func (r *lockedSource) Int63() (n int64) {
+	r.lk.Lock()
+	n = r.src.Int63()
+	r.lk.Unlock()
+	return
+}
+
+func (r *lockedSource) Seed(seed int64) {
+	r.lk.Lock()
+	r.src.Seed(seed)
+	r.lk.Unlock()
+}
+
+var rng = rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())})
 
 //DHKey 通过Diffie-Hellman算法生成共享密钥
 type DHKey struct {
@@ -84,10 +103,16 @@ func PKCS5UnPadding(origData []byte) []byte {
 	return origData[:(length - unpadding)]
 }
 
+// CryptoServer .
+type CryptoServer interface {
+	GetDevice() *gorpc.Device
+}
+
 type _CryptoServer struct {
 	gslogger.Log               // Mixin Log APIs
 	resovler     DHKeyResolver // resolver
 	block        cipher.Block  // cipher block
+	device       *gorpc.Device // client device id
 }
 
 // NewCryptoServer .
@@ -99,25 +124,29 @@ func NewCryptoServer(resovler DHKeyResolver) gorpc.Handler {
 }
 
 func (handler *_CryptoServer) OpenHandler(context gorpc.Context) error {
-	return nil
+	return gorpc.ErrSkip
 }
 
 func (handler *_CryptoServer) CloseHandler(context gorpc.Context) {
 
 }
 
+func (handler *_CryptoServer) GetDevice() *gorpc.Device {
+	return handler.device
+}
+
 func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
 
 	if handler.block == nil {
 
-		handler.D("expect WhoAmI message")
+		handler.V("expect WhoAmI message")
 		// expect whoAmI message
 		if message.Code != gorpc.CodeWhoAmI {
 			context.Close()
 			return nil, gserrors.Newf(gorpc.ErrRPC, "expect WhoAmI message but got(%s)", message.Code)
 		}
 
-		handler.D("parse WhoAmI message")
+		handler.V("parse WhoAmI message")
 
 		whoAmI, err := gorpc.ReadWhoAmI(bytes.NewBuffer(message.Content))
 
@@ -152,7 +181,7 @@ func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.
 
 		binary.BigEndian.PutUint64(key[:8], keyval)
 
-		handler.D("shared key \n\t%d\n\t%v ", keyval, key)
+		handler.V("shared key \n\t%d\n\t%v ", keyval, key)
 
 		block, err := des.NewCipher(key)
 
@@ -163,9 +192,11 @@ func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.
 
 		handler.block = block
 
-		handler.I("handshake -- success")
+		handler.I("%s handshake -- success", context.Source())
 
-		return nil, nil
+		handler.device = whoAmI.ID
+
+		return nil, context.Open()
 
 	}
 
@@ -260,7 +291,7 @@ func (handler *_CryptoClient) OpenHandler(context gorpc.Context) error {
 
 	message.Content = buff.Bytes()
 
-	handler.D("send whoAmI handshake")
+	handler.V("send whoAmI handshake")
 
 	context.WriteReadPipline(message)
 
@@ -299,7 +330,7 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 
 	if handler.block == nil {
 
-		handler.D("expect handshake accept")
+		handler.V("expect handshake accept")
 
 		if message.Code != gorpc.CodeAccept {
 
@@ -308,7 +339,7 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 			return nil, gserrors.Newf(gorpc.ErrRPC, "expect handshake(Accept) but got(%s)", message.Code)
 		}
 
-		handler.D("parse handshake accept")
+		handler.V("parse handshake accept")
 
 		val, ok := new(big.Int).SetString(string(message.Content), 0)
 
@@ -323,7 +354,7 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 
 		binary.BigEndian.PutUint64(key[:8], keyval)
 
-		handler.D("shared key \n\t%d\n\t%v ", keyval, key)
+		handler.V("shared key \n\t%d\n\t%v ", keyval, key)
 
 		block, err := des.NewCipher(key)
 
@@ -334,7 +365,7 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 
 		handler.block = block
 
-		handler.I("handshake -- success")
+		handler.I("%s handshake -- success", context.Source())
 
 		return nil, context.Open()
 	}
