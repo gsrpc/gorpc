@@ -1,4 +1,4 @@
-package gorpctest
+package test
 
 import (
 	"bytes"

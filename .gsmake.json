@@ -1,14 +1,15 @@
 {
     "name":"github.com/gsrpc/gorpc",
 
-    "domain":"task|gslang|golang",
+    "domain":"gslang|golang",
 
     "import" : [
         {"name" : "github.com/gsdocker/gsos","domain":"task|golang","version":"v2.0"},
         {"name" : "github.com/gsdocker/gserrors","domain":"task|golang","version":"v2.0"},
         {"name" : "github.com/gsdocker/gsconfig","domain":"task|golang","version":"v2.0"},
         {"name" : "github.com/gsdocker/gslogger","domain":"task|golang","version":"v2.0"},
-        {"name" : "github.com/gsrpc/gsrpc","scope":"task|gslang","version":"release/v1.0"}
+        {"name" : "github.com/gsrpc/gsrpc","domain":"task|gslang","version":"release/v1.0"},
+        {"name" : "github.com/gsmake/golang","domain":"task","version":"release/v3.0"}
     ],
 
 
@@ -18,8 +19,9 @@
         },
 
         "gsmake.golang.test" :[
-           {"dir":"./test","flags":"-bench . "},
-            {"dir":"./channel","flags":"-bench . "}
+           {"dir":"./test","flags":"-bench . -cpu 4 "},
+           {"dir":"./net","flags":"-bench . -cpu 4 "},
+           {"dir":"./","flags":"-bench . -cpu 4 "}
         ]
     }
 }

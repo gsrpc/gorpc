@@ -5,14 +5,6 @@ type Future interface {
 	Wait() (callReturn *Response, err error)
 }
 
-// Promise .
-type Promise interface {
-	Future
-	Notify(callReturn *Response, err error)
-	Timeout()
-	Cancel()
-}
-
 // Channel .
 type Channel interface {
 	Send(call *Request) (Future, error)
@@ -21,7 +13,7 @@ type Channel interface {
 // MessageChannel .
 type MessageChannel interface {
 	Channel
-	SendMessage(message *Message)
+	SendMessage(message *Message) error
 }
 
 // Send send method
