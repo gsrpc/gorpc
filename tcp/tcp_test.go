@@ -35,10 +35,6 @@ func (mock *mockRESTful) Get(name string) (retval []byte, err error) {
 	return nil, test.NewNotFound()
 }
 
-var dispatcher = test.MakeRESTful(0, &mockRESTful{
-	content: make(map[string][]byte),
-})
-
 var eventLoop = gorpc.NewEventLoop(uint32(runtime.NumCPU()), 2048, 500*time.Millisecond)
 
 var G *big.Int
@@ -64,7 +60,7 @@ func init() {
 				return handler.NewCryptoClient(gorpc.NewDevice(), G, P)
 			},
 		).Handler(
-			"heatbeat",
+			"heatbeat-client",
 			func() gorpc.Handler {
 				return handler.NewHeartbeatHandler(5 * time.Second)
 			},
@@ -83,23 +79,98 @@ func init() {
 				}))
 			},
 		).Handler(
-			"heatbeat",
+			"heatbeat-server",
 			func() gorpc.Handler {
 				return handler.NewHeartbeatHandler(5 * time.Second)
 			},
 		),
 	).EvtNewPipeline(EvtNewPipeline(func(pipeline gorpc.Pipeline) {
-		log.I("pipeline %p", pipeline)
+		pipeline.AddService(test.MakeRESTful(0, &mockRESTful{
+			content: make(map[string][]byte),
+		}))
 	})).Listen(":13512")
-}
-
-func TestConnect(t *testing.T) {
 
 	for i := 0; i < 200; i++ {
 		clientBuilder.Connect(fmt.Sprintf("test-%d", i))
 	}
 
-	for _ = range time.Tick(20 * time.Second) {
-		log.I("\n%s", gorpc.PrintProfile())
+	go func() {
+		for _ = range time.Tick(20 * time.Second) {
+			log.I("\n%s", gorpc.PrintProfile())
+		}
+	}()
+}
+
+func TestConnect(t *testing.T) {
+
+	client, err := clientBuilder.Connect("test")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	api := test.BindRESTful(0, client.Pipeline())
+
+	log.D("call Post")
+
+	err = api.Post("nil", nil)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	log.D("call Post -- success")
+
+	content, err := api.Get("nil")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if content != nil {
+		t.Fatal("rpc test error")
+	}
+
+	api.Post("hello", []byte("hello world"))
+
+	content, err = api.Get("hello")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(content) != "hello world" {
+		t.Fatal("rpc test error")
+	}
+
+	_, err = api.Get("hello2")
+
+	if err == nil {
+		t.Fatal("expect (*test.NotFound)exception")
+	}
+
+	if _, ok := err.(*test.NotFound); !ok {
+		t.Fatal("expect (*test.NotFound)exception")
+	}
+}
+
+func BenchmarkPost(t *testing.B) {
+	t.StopTimer()
+	client, err := clientBuilder.Connect("test")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	api := test.BindRESTful(0, client.Pipeline())
+
+	t.StartTimer()
+
+	for i := 0; i < t.N; i++ {
+		err = api.Post("nil", nil)
+
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }

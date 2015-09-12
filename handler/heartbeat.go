@@ -21,7 +21,6 @@ func NewHeartbeatHandler(timeout time.Duration) gorpc.Handler {
 	return &_HeartbeatHandler{
 		Log:       gslogger.Get("heartbeat"),
 		timeout:   timeout,
-		exitflag:  make(chan bool),
 		timestamp: time.Now(),
 	}
 }
@@ -33,6 +32,8 @@ func (handler *_HeartbeatHandler) Register(context gorpc.Context) error {
 func (handler *_HeartbeatHandler) Active(context gorpc.Context) error {
 
 	handler.context = context
+
+	handler.exitflag = make(chan bool)
 
 	if handler.timeout != 0 {
 		go handler.timeoutLoop()

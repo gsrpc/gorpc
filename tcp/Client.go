@@ -14,6 +14,7 @@ import (
 // Client gorpc client
 type Client interface {
 	Close()
+	Pipeline() gorpc.Pipeline
 }
 
 type _Client struct {
@@ -84,6 +85,10 @@ func (builder *ClientBuilder) Connect(name string) (Client, error) {
 	client.doconnect()
 
 	return client, err
+}
+
+func (client *_Client) Pipeline() gorpc.Pipeline {
+	return client.pipeline
 }
 
 func (client *_Client) doconnect() {

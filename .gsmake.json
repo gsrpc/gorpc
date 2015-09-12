@@ -22,8 +22,7 @@
         "gsmake.golang.test" :[
            {"dir":"./tcp","flags":"-bench . -cpu 4 "},
            {"dir":"./test","flags":"-bench . -cpu 4 "},
-           {"dir":"./timer","flags":"-bench . -cpu 4 "},
-           {"dir":"./","flags":"-bench . -cpu 4 "}
+           {"dir":"./timer","flags":"-bench . -cpu 4 "}
 
         ]
     }

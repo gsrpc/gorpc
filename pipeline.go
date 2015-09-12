@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/gsdocker/gsconfig"
-	"github.com/gsdocker/gserrors"
 	"github.com/gsdocker/gslogger"
 )
 
@@ -184,9 +183,11 @@ func (pipeline *_Pipeline) Received(message *Message) error {
 
 	current := pipeline.header
 
+	var err error
+
 	for current != nil {
 
-		message, err := current.onMessageReceived(message)
+		message, err = current.onMessageReceived(message)
 
 		// if has error
 		if err != nil {
@@ -200,40 +201,56 @@ func (pipeline *_Pipeline) Received(message *Message) error {
 		current = current.next
 	}
 
+	if message != nil {
+		return pipeline.Sink.MessageReceived(message)
+	}
+
 	return nil
 }
 
 func (pipeline *_Pipeline) SendMessage(message *Message) error {
 
-	pipeline.Lock()
-	defer pipeline.Unlock()
+	pipeline.executor.Execute(func() {
+		pipeline.Lock()
+		defer pipeline.Unlock()
 
-	if pipeline.closedflag {
-		return gserrors.Newf(ErrClosed, "pipeline(%s) closed", pipeline.name)
-	}
+		if pipeline.closedflag {
 
-	current := pipeline.tail
+			pipeline.W("pipeline(%s) closed", pipeline.name)
 
-	var err error
-
-	for current != nil {
-		message, err = current.onMessageSending(message)
-
-		// if has error
-		if err != nil {
-			return err
+			return
 		}
 
-		if message == nil {
-			return nil
+		current := pipeline.tail
+
+		var err error
+
+		for current != nil {
+			message, err = current.onMessageSending(message)
+
+			// if has error
+			if err != nil {
+
+				pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
+
+				return
+			}
+
+			if message == nil {
+				return
+			}
+
+			current = current.prev
 		}
 
-		current = current.prev
-	}
+		if message != nil {
+			err := pipeline.channel.SendMessage(message)
 
-	if message != nil {
-		return pipeline.channel.SendMessage(message)
-	}
+			if err != nil {
+				pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
+			}
+		}
+	})
 
 	return nil
 }

@@ -261,10 +261,11 @@ func (handler *_CryptoServer) Panic(context gorpc.Context, err error) {
 }
 
 type _CryptoClient struct {
-	gslogger.Log               // Mixin Log APIs
-	dhKey        *DHKey        // crypto dhkey
-	block        cipher.Block  // cipher block
-	device       *gorpc.Device // client device id
+	gslogger.Log                  // Mixin Log APIs
+	dhKey        *DHKey           // crypto dhkey
+	block        cipher.Block     // cipher block
+	device       *gorpc.Device    // client device id
+	cached       []*gorpc.Message // cached messages
 }
 
 // NewCryptoClient .
@@ -339,9 +340,13 @@ func (handler *_CryptoClient) MessageSending(context gorpc.Context, message *gor
 		message.Content = content
 
 		handler.V("encrypt message content[blocksize :%d, blocks ：%d]", blocksize, blocks)
+
+		return message, nil
 	}
 
-	return message, nil
+	handler.cached = append(handler.cached, message)
+
+	return nil, nil
 }
 
 func (handler *_CryptoClient) MessageReceived(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
@@ -388,6 +393,14 @@ func (handler *_CryptoClient) MessageReceived(context gorpc.Context, message *go
 		handler.V("%s handshake -- success", context.Name())
 
 		context.FireActive()
+
+		for _, message := range handler.cached {
+			message, _ = handler.MessageSending(context, message)
+
+			context.Send(message)
+		}
+
+		handler.cached = nil
 
 		return nil, nil
 	}

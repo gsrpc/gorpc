@@ -164,6 +164,8 @@ func (server *Server) newChannel(conn net.Conn) (err error) {
 		return err
 	}
 
+	channel.pipeline.Active()
+
 	server.evtNewPipeline(channel.pipeline)
 
 	server.RLock()
