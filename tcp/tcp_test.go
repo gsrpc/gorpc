@@ -1,0 +1,105 @@
+package tcp
+
+import (
+	"com/gsrpc/test"
+	"fmt"
+	"math/big"
+	"runtime"
+	"testing"
+	"time"
+
+	"github.com/gsdocker/gslogger"
+	"github.com/gsrpc/gorpc"
+	"github.com/gsrpc/gorpc/handler"
+)
+
+var log = gslogger.Get("profile")
+
+type mockRESTful struct {
+	content map[string][]byte
+}
+
+func (mock *mockRESTful) Post(name string, content []byte) (err error) {
+	mock.content[name] = content
+	return nil
+}
+
+func (mock *mockRESTful) Get(name string) (retval []byte, err error) {
+
+	val, ok := mock.content[name]
+
+	if ok {
+		return val, nil
+	}
+
+	return nil, test.NewNotFound()
+}
+
+var dispatcher = test.MakeRESTful(0, &mockRESTful{
+	content: make(map[string][]byte),
+})
+
+var eventLoop = gorpc.NewEventLoop(uint32(runtime.NumCPU()), 2048, 500*time.Millisecond)
+
+var G *big.Int
+var P *big.Int
+
+var clientBuilder *ClientBuilder
+
+func init() {
+
+	gslogger.NewFlags(gslogger.ERROR | gslogger.INFO)
+
+	G, _ = new(big.Int).SetString("6849211231874234332173554215962568648211715948614349192108760170867674332076420634857278025209099493881977517436387566623834457627945222750416199306671083", 0)
+
+	P, _ = new(big.Int).SetString("13196520348498300509170571968898643110806720751219744788129636326922565480984492185368038375211941297871289403061486510064429072584259746910423138674192557", 0)
+
+	clientBuilder = BuildClient(
+		gorpc.BuildPipeline(eventLoop).Handler(
+			"profile",
+			gorpc.ProfileHandler,
+		).Handler(
+			"dh-client",
+			func() gorpc.Handler {
+				return handler.NewCryptoClient(gorpc.NewDevice(), G, P)
+			},
+		).Handler(
+			"heatbeat",
+			func() gorpc.Handler {
+				return handler.NewHeartbeatHandler(5 * time.Second)
+			},
+		),
+	)
+
+	go NewServer(
+		gorpc.BuildPipeline(eventLoop).Handler(
+			"profile",
+			gorpc.ProfileHandler,
+		).Handler(
+			"dh-server",
+			func() gorpc.Handler {
+				return handler.NewCryptoServer(handler.DHKeyResolve(func(device *gorpc.Device) (*handler.DHKey, error) {
+					return handler.NewDHKey(G, P), nil
+				}))
+			},
+		).Handler(
+			"heatbeat",
+			func() gorpc.Handler {
+				return handler.NewHeartbeatHandler(5 * time.Second)
+			},
+		),
+	).EvtNewPipeline(EvtNewPipeline(func(pipeline gorpc.Pipeline) {
+		log.I("pipeline %p", pipeline)
+	})).Listen(":13512")
+}
+
+func TestConnect(t *testing.T) {
+
+	for i := 0; i < 200; i++ {
+		clientBuilder.Connect(fmt.Sprintf("test-%d", i))
+	}
+
+	for _ = range time.Tick(20 * time.Second) {
+		log.I("\n%s", gorpc.PrintProfile())
+	}
+}

@@ -12,8 +12,8 @@ type Channel interface {
 
 // MessageChannel .
 type MessageChannel interface {
-	Channel
 	SendMessage(message *Message) error
+	Close()
 }
 
 // Send send method

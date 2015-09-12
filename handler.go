@@ -1,5 +1,10 @@
 package gorpc
 
+import (
+	"github.com/gsdocker/gserrors"
+	"github.com/gsdocker/gslogger"
+)
+
 // Context channel handler context
 type Context interface {
 	// current handler name
@@ -7,13 +12,11 @@ type Context interface {
 	// Pipeline current channel pipeline
 	Pipeline() Pipeline
 	// OnActive
-	OnActive()
-	// OnMessageReceived fire MessageReceived event on next pipline handler
-	OnMessageReceived(message *Message)
-	// OnMessageSending fire MessageSending event on prev pipline handler
-	OnMessageSending(message *Message)
+	FireActive()
 	// Send create new send pipeline message
-	Send(message *Message) error
+	Send(message *Message)
+	// Close close current pipeline
+	Close()
 }
 
 // Handler the gorpc channel pipeline handlers
@@ -29,9 +32,9 @@ type Handler interface {
 	// Inactive system call this function when pipeline state trans to inactive
 	Inactive(context Context)
 	// MessageReceived
-	MessageReceived(context Context, message *Message) error
+	MessageReceived(context Context, message *Message) (*Message, error)
 	// MessageSending
-	MessageSending(context Context, message *Message) error
+	MessageSending(context Context, message *Message) (*Message, error)
 	// Panic handle async pipline method error
 	Panic(context Context, err error)
 }
@@ -48,16 +51,18 @@ type SharedHandler interface {
 type HandlerF func() Handler
 
 type _Context struct {
-	name     string        // context bound handler name
-	handler  Handler       // context bound handler
-	shared   SharedHandler // shared handler
-	next     *_Context     // pipeline next handler
-	prev     *_Context     // pipeline prev handler
-	pipeline *_Pipeline    // pipeline which handler belongs to
+	gslogger.Log               // mixin log
+	name         string        // context bound handler name
+	handler      Handler       // context bound handler
+	shared       SharedHandler // shared handler
+	next         *_Context     // pipeline next handler
+	prev         *_Context     // pipeline prev handler
+	pipeline     *_Pipeline    // pipeline which handler belongs to
 }
 
 func newContext(name string, handler Handler, pipeline *_Pipeline, prev *_Context) (*_Context, error) {
 	context := &_Context{
+		Log:      gslogger.Get("handler-context"),
 		name:     name,
 		handler:  handler,
 		pipeline: pipeline,
@@ -83,6 +88,10 @@ func newContext(name string, handler Handler, pipeline *_Pipeline, prev *_Contex
 
 }
 
+func (context *_Context) Close() {
+	context.pipeline.Close()
+}
+
 func (context *_Context) lock() {
 	if context.shared != nil {
 		context.shared.Lock()
@@ -103,18 +112,109 @@ func (context *_Context) Pipeline() Pipeline {
 	return context.pipeline
 }
 
-func (context *_Context) OnActive() {
-
+func (context *_Context) FireActive() {
+	context.pipeline.fireActive(context)
 }
 
-func (context *_Context) OnMessageReceived(message *Message) {
+func (context *_Context) Send(message *Message) {
 
+	context.pipeline.send(context, message)
 }
 
-func (context *_Context) OnMessageSending(message *Message) {
+func (context *_Context) onActive() (err error) {
+	context.lock()
+	defer func() {
 
+		if e := recover(); e != nil {
+			err = gserrors.Newf(nil, "catch unhandle error :%s", e)
+		}
+
+		context.unlock()
+	}()
+
+	context.handler.Active(context)
+
+	return
 }
 
-func (context *_Context) Send(message *Message) error {
-	return nil
+func (context *_Context) onPanic(err error) {
+	context.lock()
+	defer func() {
+
+		if e := recover(); e != nil {
+			err = gserrors.Newf(nil, "catch unhandle error :%s", e)
+		}
+
+		context.unlock()
+	}()
+
+	context.handler.Panic(context, err)
+}
+
+func (context *_Context) onInactive() {
+	context.lock()
+	defer func() {
+
+		if e := recover(); e != nil {
+			context.W(
+				"call handler(%s) onInactive method error\n%s",
+				context.Name(),
+				gserrors.Newf(nil, "catch unhandle error :%s", e),
+			)
+		}
+
+		context.unlock()
+	}()
+
+	context.handler.Inactive(context)
+}
+
+func (context *_Context) onUnregister() {
+	context.lock()
+	defer func() {
+
+		if e := recover(); e != nil {
+			context.W(
+				"call handler(%s) Unregister method error\n%s",
+				context.Name(),
+				gserrors.Newf(nil, "catch unhandle error :%s", e),
+			)
+		}
+
+		context.unlock()
+	}()
+
+	context.handler.Unregister(context)
+}
+
+func (context *_Context) onMessageSending(message *Message) (ret *Message, err error) {
+	context.lock()
+	defer func() {
+
+		if e := recover(); e != nil {
+			err = gserrors.Newf(nil, "catch unhandle error :%s", e)
+		}
+
+		context.unlock()
+	}()
+
+	ret, err = context.handler.MessageSending(context, message)
+
+	return
+}
+
+func (context *_Context) onMessageReceived(message *Message) (ret *Message, err error) {
+	context.lock()
+	defer func() {
+
+		if e := recover(); e != nil {
+			err = gserrors.Newf(nil, "catch unhandle error :%s", e)
+		}
+
+		context.unlock()
+	}()
+
+	ret, err = context.handler.MessageReceived(context, message)
+
+	return
 }
