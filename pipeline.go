@@ -25,10 +25,14 @@ type Pipeline interface {
 	EventLoop() EventLoop
 	// Channel implement channel interface
 	Channel
+	// SendMessage .
+	SendMessage(message *Message) error
 	// AddService add new service
 	AddService(dispatcher Dispatcher)
 	// RemoveService remove service
 	RemoveService(dispatcher Dispatcher)
+	// Get Handler by name
+	Handler(name string) (Handler, bool)
 }
 
 // PipelineBuilder pipeline builder
@@ -108,6 +112,20 @@ func (pipeline *_Pipeline) String() string {
 
 func (pipeline *_Pipeline) Name() string {
 	return pipeline.name
+}
+
+func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
+	current := pipeline.header
+
+	for current != nil {
+		if current.Name() == name {
+			return current.handler, true
+		}
+
+		current = current.next
+	}
+
+	return nil, false
 }
 
 func (pipeline *_Pipeline) Close() {
