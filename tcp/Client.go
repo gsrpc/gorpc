@@ -99,7 +99,6 @@ func (builder *ClientBuilder) Connect(name string) (Client, error) {
 		Log:              gslogger.Get("gorpc-tcp-client"),
 		raddr:            builder.raddr,
 		state:            gorpc.StateDisconnect,
-		cachedQ:          make(chan *gorpc.Message, builder.cachedsize),
 		closedflag:       make(chan bool),
 		evtClosePipeline: builder.evtClosePipeline,
 		evtNewPipeline:   builder.evtNewPipeline,
@@ -172,6 +171,8 @@ func (client *_Client) connected(conn net.Conn) {
 		return
 	}
 
+	client.cachedQ = make(chan *gorpc.Message, client.cachedsize)
+
 	client.pipeline.Active()
 
 	client.state = gorpc.StateConnected
@@ -206,8 +207,8 @@ func (client *_Client) CloseChannel() {
 	client.Lock()
 	defer client.Unlock()
 
-	if client.state != gorpc.StateConnected {
-		return
+	if client.conn != nil {
+		client.conn.Close()
 	}
 
 	client.conn = nil
@@ -215,8 +216,6 @@ func (client *_Client) CloseChannel() {
 	client.pipeline.Inactive()
 
 	if client.retry != 0 && client.state != gorpc.StateClosed {
-
-		client.cachedQ = make(chan *gorpc.Message, client.cachedsize)
 
 		client.state = gorpc.StateDisconnect
 
@@ -233,7 +232,7 @@ func (client *_Client) closeConn(conn net.Conn) {
 		conn.Close()
 	}
 
-	if client.state != gorpc.StateConnected || client.conn != conn {
+	if client.conn != conn {
 		return
 	}
 
@@ -242,8 +241,6 @@ func (client *_Client) closeConn(conn net.Conn) {
 	client.pipeline.Inactive()
 
 	if client.retry != 0 && client.state != gorpc.StateClosed {
-
-		client.cachedQ = make(chan *gorpc.Message, client.cachedsize)
 
 		client.state = gorpc.StateDisconnect
 
@@ -269,7 +266,7 @@ func (client *_Client) recvLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 		err = pipeline.Received(msg)
 
 		if err == gorpc.ErrClosed {
-			client.Close()
+			client.closeConn(conn)
 			break
 		}
 

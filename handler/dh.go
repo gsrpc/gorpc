@@ -145,6 +145,10 @@ func (handler *_CryptoServer) GetDevice() *gorpc.Device {
 
 func (handler *_CryptoServer) MessageReceived(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
 
+	if message.Code == gorpc.CodeHeartbeat {
+		return message, nil
+	}
+
 	if handler.block == nil {
 
 		handler.V("expect WhoAmI message")
@@ -351,6 +355,10 @@ func (handler *_CryptoClient) MessageSending(context gorpc.Context, message *gor
 
 func (handler *_CryptoClient) MessageReceived(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
 
+	if message.Code == gorpc.CodeHeartbeat {
+		return message, nil
+	}
+
 	if handler.block == nil {
 
 		handler.V("expect handshake accept")
@@ -390,7 +398,7 @@ func (handler *_CryptoClient) MessageReceived(context gorpc.Context, message *go
 
 		handler.block = block
 
-		handler.V("%s handshake -- success", context.Name())
+		handler.I("%s handshake -- success", context.Name())
 
 		context.FireActive()
 

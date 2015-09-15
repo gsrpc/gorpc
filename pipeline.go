@@ -128,41 +128,13 @@ func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
 	return nil, false
 }
 
-func (pipeline *_Pipeline) Close() {
-	pipeline.executor.Execute(func() {
-
-		pipeline.Lock()
-		defer pipeline.Unlock()
-
-		if pipeline.closedflag {
-			return
-		}
-
-		pipeline.closedflag = true
-
-		current := pipeline.header
-
-		for current != nil {
-
-			current.onInactive()
-
-			current.onUnregister()
-
-			current = current.next
-		}
-
-		if closable, ok := pipeline.channel.(ClosableChannel); ok {
-			closable.CloseChannel()
-		}
-	})
-
-}
-
 func (pipeline *_Pipeline) Active() error {
 	pipeline.Lock()
 	defer pipeline.Unlock()
 
 	current := pipeline.header
+
+	pipeline.closedflag = false
 
 	for current != nil {
 
@@ -301,6 +273,25 @@ func (pipeline *_Pipeline) fireActive(context *_Context) {
 			}
 		}
 	})
+}
+
+func (pipeline *_Pipeline) Close() {
+	pipeline.executor.Execute(func() {
+
+		pipeline.Lock()
+		defer pipeline.Unlock()
+
+		pipeline.close()
+	})
+
+}
+
+func (pipeline *_Pipeline) onClose() {
+	if closable, ok := pipeline.channel.(ClosableChannel); ok {
+		closable.CloseChannel()
+	} else {
+		pipeline.Close()
+	}
 }
 
 func (pipeline *_Pipeline) close() {

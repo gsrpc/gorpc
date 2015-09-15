@@ -89,7 +89,7 @@ func newContext(name string, handler Handler, pipeline *_Pipeline, prev *_Contex
 }
 
 func (context *_Context) Close() {
-	context.pipeline.Close()
+	context.pipeline.onClose()
 }
 
 func (context *_Context) lock() {

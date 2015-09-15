@@ -237,6 +237,10 @@ func (channel *_TCPChannel) sendLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 	}
 }
 
+func (channel *_TCPChannel) CloseChannel() {
+	channel.Close()
+}
+
 func (channel *_TCPChannel) Close() {
 	channel.Lock()
 	defer channel.Unlock()
