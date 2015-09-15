@@ -103,7 +103,7 @@ func (builder *PipelineBuilder) Build(name string, channel MessageChannel) (Pipe
 }
 
 func (pipeline *_Pipeline) EventLoop() EventLoop {
-	return pipeline.EventLoop()
+	return pipeline.executor
 }
 
 func (pipeline *_Pipeline) String() string {

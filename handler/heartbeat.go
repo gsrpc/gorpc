@@ -31,12 +31,16 @@ func (handler *_HeartbeatHandler) Register(context gorpc.Context) error {
 
 func (handler *_HeartbeatHandler) Active(context gorpc.Context) error {
 
-	handler.context = context
+	if handler.exitflag == nil {
+		handler.context = context
 
-	handler.exitflag = make(chan bool)
+		handler.exitflag = make(chan bool)
 
-	if handler.timeout != 0 {
-		go handler.timeoutLoop()
+		handler.timestamp = time.Now()
+
+		if handler.timeout != 0 {
+			go handler.timeoutLoop(handler.exitflag)
+		}
 	}
 
 	return nil
@@ -46,16 +50,26 @@ func (handler *_HeartbeatHandler) Unregister(context gorpc.Context) {
 }
 
 func (handler *_HeartbeatHandler) Inactive(context gorpc.Context) {
-	close(handler.exitflag)
+
+	handler.D("=================================")
+
+	if handler.exitflag != nil {
+
+		close(handler.exitflag)
+
+		handler.exitflag = nil
+	}
+
 }
 
-func (handler *_HeartbeatHandler) timeoutLoop() {
+func (handler *_HeartbeatHandler) timeoutLoop(exitflag chan bool) {
 
 	ticker := time.NewTicker(handler.timeout)
 
 	defer ticker.Stop()
 
 	for {
+
 		select {
 		case <-ticker.C:
 
@@ -73,7 +87,8 @@ func (handler *_HeartbeatHandler) timeoutLoop() {
 
 			handler.V("%s send heartbeat message", handler.context.Pipeline())
 
-		case <-handler.exitflag:
+		case <-exitflag:
+			handler.V("~~~~~~~~~~~~~~")
 			return
 		}
 	}

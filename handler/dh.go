@@ -136,7 +136,7 @@ func (handler *_CryptoServer) Unregister(context gorpc.Context) {
 }
 
 func (handler *_CryptoServer) Inactive(context gorpc.Context) {
-
+	handler.block = nil
 }
 
 func (handler *_CryptoServer) GetDevice() *gorpc.Device {
@@ -318,7 +318,7 @@ func (handler *_CryptoClient) Unregister(context gorpc.Context) {
 }
 
 func (handler *_CryptoClient) Inactive(context gorpc.Context) {
-
+	handler.block = nil
 }
 
 func (handler *_CryptoClient) MessageSending(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
