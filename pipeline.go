@@ -151,7 +151,9 @@ func (pipeline *_Pipeline) Close() {
 			current = current.next
 		}
 
-		pipeline.channel.Close()
+		if closable, ok := pipeline.channel.(ClosableChannel); ok {
+			closable.CloseChannel()
+		}
 	})
 
 }
@@ -320,7 +322,9 @@ func (pipeline *_Pipeline) close() {
 		current = current.next
 	}
 
-	pipeline.channel.Close()
+	if closable, ok := pipeline.channel.(ClosableChannel); ok {
+		closable.CloseChannel()
+	}
 }
 
 func (pipeline *_Pipeline) send(context *_Context, message *Message) {

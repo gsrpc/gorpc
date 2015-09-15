@@ -13,7 +13,11 @@ type Channel interface {
 // MessageChannel .
 type MessageChannel interface {
 	SendMessage(message *Message) error
-	Close()
+}
+
+// ClosableChannel .
+type ClosableChannel interface {
+	CloseChannel()
 }
 
 // Send send method

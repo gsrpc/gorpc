@@ -32,6 +32,9 @@ func (handler *_HeartbeatHandler) Register(context gorpc.Context) error {
 func (handler *_HeartbeatHandler) Active(context gorpc.Context) error {
 
 	if handler.exitflag == nil {
+
+		handler.D("active ........................")
+
 		handler.context = context
 
 		handler.exitflag = make(chan bool)
@@ -51,9 +54,9 @@ func (handler *_HeartbeatHandler) Unregister(context gorpc.Context) {
 
 func (handler *_HeartbeatHandler) Inactive(context gorpc.Context) {
 
-	handler.D("=================================")
-
 	if handler.exitflag != nil {
+
+		handler.D("Inactive ........................")
 
 		close(handler.exitflag)
 
@@ -88,7 +91,7 @@ func (handler *_HeartbeatHandler) timeoutLoop(exitflag chan bool) {
 			handler.V("%s send heartbeat message", handler.context.Pipeline())
 
 		case <-exitflag:
-			handler.V("~~~~~~~~~~~~~~")
+			handler.V("exit heartbeat loop .....................")
 			return
 		}
 	}
