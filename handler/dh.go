@@ -109,10 +109,11 @@ type CryptoServer interface {
 }
 
 type _CryptoServer struct {
-	gslogger.Log               // Mixin Log APIs
-	resovler     DHKeyResolver // resolver
-	block        cipher.Block  // cipher block
-	device       *gorpc.Device // client device id
+	gslogger.Log                  // Mixin Log APIs
+	resovler     DHKeyResolver    // resolver
+	block        cipher.Block     // cipher block
+	device       *gorpc.Device    // client device id
+	cached       []*gorpc.Message // cached messages
 }
 
 // NewCryptoServer .
@@ -137,6 +138,7 @@ func (handler *_CryptoServer) Unregister(context gorpc.Context) {
 
 func (handler *_CryptoServer) Inactive(context gorpc.Context) {
 	handler.block = nil
+	handler.cached = nil
 }
 
 func (handler *_CryptoServer) GetDevice() *gorpc.Device {
@@ -210,6 +212,14 @@ func (handler *_CryptoServer) MessageReceived(context gorpc.Context, message *go
 
 		context.FireActive()
 
+		for _, message := range handler.cached {
+			message, _ = handler.MessageSending(context, message)
+
+			context.Send(message)
+		}
+
+		handler.cached = nil
+
 		return nil, nil
 
 	}
@@ -257,6 +267,8 @@ func (handler *_CryptoServer) MessageSending(context gorpc.Context, message *gor
 
 		message.Content = content
 	}
+
+	handler.cached = append(handler.cached, message)
 
 	return message, nil
 }
@@ -323,6 +335,7 @@ func (handler *_CryptoClient) Unregister(context gorpc.Context) {
 
 func (handler *_CryptoClient) Inactive(context gorpc.Context) {
 	handler.block = nil
+	handler.cached = nil
 }
 
 func (handler *_CryptoClient) MessageSending(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {

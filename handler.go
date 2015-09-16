@@ -52,9 +52,9 @@ type Handler interface {
 // SharedHandler this handler will been shared with more than one piplines
 type SharedHandler interface {
 	// Lock lock this handler
-	Lock()
+	HandlerLock()
 	// Unlock unlock this handler
-	Unlock()
+	HandlerUnlock()
 }
 
 // HandlerF handler factory
@@ -110,7 +110,7 @@ func (context *_Context) lock() {
 	context.Lock()
 
 	if context.shared != nil {
-		context.shared.Lock()
+		context.shared.HandlerLock()
 	}
 }
 
@@ -118,11 +118,15 @@ func (context *_Context) unlock() {
 	context.Unlock()
 
 	if context.shared != nil {
-		context.shared.Unlock()
+		context.shared.HandlerUnlock()
 	}
 }
 
 func (context *_Context) Name() string {
+	return context.name
+}
+
+func (context *_Context) String() string {
 	return context.name
 }
 
@@ -155,9 +159,11 @@ func (context *_Context) onActive() (err error) {
 		return nil
 	}
 
-	context.handler.Active(context)
+	err = context.handler.Active(context)
 
-	context.state = handlerActived
+	if err == nil || err == ErrSkip {
+		context.state = handlerActived
+	}
 
 	return
 }
@@ -233,10 +239,6 @@ func (context *_Context) onMessageSending(message *Message) (ret *Message, err e
 		context.unlock()
 	}()
 
-	if context.state != handlerActived {
-		return message, nil
-	}
-
 	ret, err = context.handler.MessageSending(context, message)
 
 	return
@@ -252,10 +254,6 @@ func (context *_Context) onMessageReceived(message *Message) (ret *Message, err 
 
 		context.unlock()
 	}()
-
-	if context.state != handlerActived {
-		return message, nil
-	}
 
 	ret, err = context.handler.MessageReceived(context, message)
 

@@ -33,8 +33,6 @@ func (handler *_HeartbeatHandler) Active(context gorpc.Context) error {
 
 	if handler.exitflag == nil {
 
-		handler.D("active ........................")
-
 		handler.context = context
 
 		handler.exitflag = make(chan bool)
@@ -55,8 +53,6 @@ func (handler *_HeartbeatHandler) Unregister(context gorpc.Context) {
 func (handler *_HeartbeatHandler) Inactive(context gorpc.Context) {
 
 	if handler.exitflag != nil {
-
-		handler.D("Inactive ........................")
 
 		close(handler.exitflag)
 

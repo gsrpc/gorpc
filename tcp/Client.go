@@ -104,6 +104,7 @@ func (builder *ClientBuilder) Connect(name string) (Client, error) {
 		evtNewPipeline:   builder.evtNewPipeline,
 		retry:            builder.retry,
 		cachedsize:       builder.cachedsize,
+		cachedQ:          make(chan *gorpc.Message, builder.cachedsize),
 	}
 
 	var err error
@@ -157,7 +158,11 @@ func (client *_Client) doconnect() {
 
 func (client *_Client) SendMessage(message *gorpc.Message) error {
 
-	client.cachedQ <- message
+	select {
+	case client.cachedQ <- message:
+	default:
+		return gorpc.ErrOverflow
+	}
 
 	return nil
 }
@@ -170,8 +175,6 @@ func (client *_Client) connected(conn net.Conn) {
 		conn.Close()
 		return
 	}
-
-	client.cachedQ = make(chan *gorpc.Message, client.cachedsize)
 
 	client.pipeline.Active()
 
@@ -219,6 +222,8 @@ func (client *_Client) CloseChannel() {
 
 		client.state = gorpc.StateDisconnect
 
+		client.cachedQ = make(chan *gorpc.Message, client.cachedsize)
+
 		go client.doconnect()
 	}
 }
@@ -243,6 +248,8 @@ func (client *_Client) closeConn(conn net.Conn) {
 	if client.retry != 0 && client.state != gorpc.StateClosed {
 
 		client.state = gorpc.StateDisconnect
+
+		client.cachedQ = make(chan *gorpc.Message, client.cachedsize)
 
 		go client.doconnect()
 	}

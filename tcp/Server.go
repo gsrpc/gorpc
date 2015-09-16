@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -158,7 +159,7 @@ func (server *Server) newChannel(conn net.Conn) (err error) {
 		evtClosePipeline: server.evtClosePipeline,
 	}
 
-	channel.pipeline, err = server.builder.Build(conn.RemoteAddr().String(), channel)
+	channel.pipeline, err = server.builder.Build(fmt.Sprintf("%s:%s", server.name, conn.RemoteAddr().String()), channel)
 
 	if err != nil {
 		return err

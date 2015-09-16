@@ -140,6 +140,8 @@ func (pipeline *_Pipeline) Active() error {
 
 	for current != nil {
 
+		pipeline.V("%s active handler(%s)", pipeline, current)
+
 		if err := current.onActive(); err != nil {
 			if err == ErrSkip {
 				return nil
@@ -199,26 +201,33 @@ func (pipeline *_Pipeline) Received(message *Message) error {
 }
 
 func (pipeline *_Pipeline) fireActive(context *_Context) {
-	pipeline.executor.Execute(func() {
+	current := context.next
 
-		if current := context.next; current != nil {
-			if err := current.onActive(); err != nil {
+	for current != nil {
 
-				if err == ErrSkip {
-					return
-				}
+		if err := current.onActive(); err != nil {
 
-				context.onPanic(err)
-
-				pipeline.close()
-
+			if err == ErrSkip {
 				return
 			}
+
+			pipeline.E("active %s error :%s", current, err)
+
+			context.onPanic(err)
+
+			pipeline.close()
+
+			return
 		}
-	})
+
+		pipeline.V("%s active handler(%s)", pipeline, current)
+
+		current = current.next
+	}
 }
 
 func (pipeline *_Pipeline) Close() {
+
 	pipeline.executor.Execute(func() {
 
 		pipeline.Lock()
@@ -230,6 +239,7 @@ func (pipeline *_Pipeline) Close() {
 }
 
 func (pipeline *_Pipeline) onClose() {
+
 	if closable, ok := pipeline.channel.(ClosableChannel); ok {
 		closable.CloseChannel()
 	} else {
