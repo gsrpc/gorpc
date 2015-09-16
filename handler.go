@@ -1,8 +1,18 @@
 package gorpc
 
 import (
+	"sync"
+
 	"github.com/gsdocker/gserrors"
 	"github.com/gsdocker/gslogger"
+)
+
+type handlerState int
+
+const (
+	handlerRegister handlerState = iota
+	handlerActived
+	handlerUnregister
 )
 
 // Context channel handler context
@@ -52,12 +62,14 @@ type HandlerF func() Handler
 
 type _Context struct {
 	gslogger.Log               // mixin log
+	sync.Mutex                 // context mutex
 	name         string        // context bound handler name
 	handler      Handler       // context bound handler
 	shared       SharedHandler // shared handler
 	next         *_Context     // pipeline next handler
 	prev         *_Context     // pipeline prev handler
 	pipeline     *_Pipeline    // pipeline which handler belongs to
+	state        handlerState  // handler state
 }
 
 func newContext(name string, handler Handler, pipeline *_Pipeline, prev *_Context) (*_Context, error) {
@@ -84,6 +96,8 @@ func newContext(name string, handler Handler, pipeline *_Pipeline, prev *_Contex
 		context.prev.next = context
 	}
 
+	context.state = handlerRegister
+
 	return context, nil
 
 }
@@ -93,12 +107,16 @@ func (context *_Context) Close() {
 }
 
 func (context *_Context) lock() {
+	context.Lock()
+
 	if context.shared != nil {
 		context.shared.Lock()
 	}
 }
 
 func (context *_Context) unlock() {
+	context.Unlock()
+
 	if context.shared != nil {
 		context.shared.Unlock()
 	}
@@ -123,6 +141,7 @@ func (context *_Context) Send(message *Message) {
 
 func (context *_Context) onActive() (err error) {
 	context.lock()
+
 	defer func() {
 
 		if e := recover(); e != nil {
@@ -132,7 +151,13 @@ func (context *_Context) onActive() (err error) {
 		context.unlock()
 	}()
 
+	if context.state != handlerRegister {
+		return nil
+	}
+
 	context.handler.Active(context)
+
+	context.state = handlerActived
 
 	return
 }
@@ -166,7 +191,13 @@ func (context *_Context) onInactive() {
 		context.unlock()
 	}()
 
+	if context.state != handlerActived {
+		return
+	}
+
 	context.handler.Inactive(context)
+
+	context.state = handlerRegister
 }
 
 func (context *_Context) onUnregister() {
@@ -184,7 +215,11 @@ func (context *_Context) onUnregister() {
 		context.unlock()
 	}()
 
+	gserrors.Assert(context.state == handlerRegister, "must call register or Inactive first")
+
 	context.handler.Unregister(context)
+
+	context.state = handlerUnregister
 }
 
 func (context *_Context) onMessageSending(message *Message) (ret *Message, err error) {
@@ -197,6 +232,10 @@ func (context *_Context) onMessageSending(message *Message) (ret *Message, err e
 
 		context.unlock()
 	}()
+
+	if context.state != handlerActived {
+		return message, nil
+	}
 
 	ret, err = context.handler.MessageSending(context, message)
 
@@ -213,6 +252,10 @@ func (context *_Context) onMessageReceived(message *Message) (ret *Message, err 
 
 		context.unlock()
 	}()
+
+	if context.state != handlerActived {
+		return message, nil
+	}
 
 	ret, err = context.handler.MessageReceived(context, message)
 

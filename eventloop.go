@@ -16,6 +16,8 @@ type EventLoop interface {
 	Execute(task func())
 	// After delay execute task
 	After(delay time.Duration, task func()) *timer.Timer
+
+	TimeWheel() *timer.Wheel
 }
 
 type _EventLoop struct {
@@ -44,6 +46,10 @@ func NewEventLoop(current uint32, cached uint32, timerTick time.Duration) EventL
 
 	return loop
 
+}
+
+func (loop *_EventLoop) TimeWheel() *timer.Wheel {
+	return loop.timewheel
 }
 
 func (loop *_EventLoop) execute(task func()) {

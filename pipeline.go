@@ -102,6 +102,10 @@ func (builder *PipelineBuilder) Build(name string, channel MessageChannel) (Pipe
 	return pipeline, nil
 }
 
+func (pipeline *_Pipeline) closed() bool {
+	return pipeline.closedflag
+}
+
 func (pipeline *_Pipeline) EventLoop() EventLoop {
 	return pipeline.executor
 }
@@ -129,8 +133,6 @@ func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
 }
 
 func (pipeline *_Pipeline) Active() error {
-	pipeline.Lock()
-	defer pipeline.Unlock()
 
 	current := pipeline.header
 
@@ -152,8 +154,10 @@ func (pipeline *_Pipeline) Active() error {
 }
 
 func (pipeline *_Pipeline) Inactive() {
-	pipeline.Lock()
-	defer pipeline.Unlock()
+
+	if pipeline.closed() {
+		return
+	}
 
 	current := pipeline.header
 
@@ -166,12 +170,6 @@ func (pipeline *_Pipeline) Inactive() {
 }
 
 func (pipeline *_Pipeline) Received(message *Message) error {
-	pipeline.Lock()
-	defer pipeline.Unlock()
-
-	if pipeline.closedflag {
-		return ErrClosed
-	}
 
 	current := pipeline.header
 
@@ -200,63 +198,8 @@ func (pipeline *_Pipeline) Received(message *Message) error {
 	return nil
 }
 
-func (pipeline *_Pipeline) SendMessage(message *Message) error {
-
-	pipeline.executor.Execute(func() {
-		pipeline.Lock()
-		defer pipeline.Unlock()
-
-		if pipeline.closedflag {
-
-			pipeline.W("pipeline(%s) closed", pipeline.name)
-
-			return
-		}
-
-		current := pipeline.tail
-
-		var err error
-
-		for current != nil {
-			message, err = current.onMessageSending(message)
-
-			// if has error
-			if err != nil {
-
-				pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
-
-				return
-			}
-
-			if message == nil {
-				return
-			}
-
-			current = current.prev
-		}
-
-		if message != nil {
-			err := pipeline.channel.SendMessage(message)
-
-			if err != nil {
-				pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
-			}
-		}
-	})
-
-	return nil
-}
-
 func (pipeline *_Pipeline) fireActive(context *_Context) {
 	pipeline.executor.Execute(func() {
-
-		pipeline.Lock()
-		defer pipeline.Unlock()
-
-		if pipeline.closedflag {
-			context.onPanic(ErrClosed)
-			return
-		}
 
 		if current := context.next; current != nil {
 			if err := current.onActive(); err != nil {
@@ -322,14 +265,6 @@ func (pipeline *_Pipeline) send(context *_Context, message *Message) {
 
 	pipeline.executor.Execute(func() {
 
-		pipeline.Lock()
-		defer pipeline.Unlock()
-
-		if pipeline.closedflag {
-			context.onPanic(ErrClosed)
-			return
-		}
-
 		current := context.prev
 
 		var err error
@@ -354,9 +289,47 @@ func (pipeline *_Pipeline) send(context *_Context, message *Message) {
 		if message != nil {
 			err := pipeline.channel.SendMessage(message)
 			if err != nil {
-				pipeline.E("%s send message(%p) error :%s", err)
+				pipeline.E("%s send message(%p) error :%s", pipeline, message, err)
 				context.onPanic(err)
 			}
 		}
 	})
+}
+
+func (pipeline *_Pipeline) SendMessage(message *Message) error {
+
+	current := pipeline.tail
+
+	var err error
+
+	for current != nil {
+		message, err = current.onMessageSending(message)
+
+		// if has error
+		if err != nil {
+
+			pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
+
+			return err
+		}
+
+		if message == nil {
+			return nil
+		}
+
+		current = current.prev
+	}
+
+	if message != nil {
+
+		err := pipeline.channel.SendMessage(message)
+
+		if err != nil {
+			pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
+
+			return err
+		}
+	}
+
+	return nil
 }

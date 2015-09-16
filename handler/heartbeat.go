@@ -42,7 +42,7 @@ func (handler *_HeartbeatHandler) Active(context gorpc.Context) error {
 		handler.timestamp = time.Now()
 
 		if handler.timeout != 0 {
-			go handler.timeoutLoop(handler.exitflag)
+			go handler.timeoutLoop(context, handler.exitflag)
 		}
 	}
 
@@ -65,9 +65,11 @@ func (handler *_HeartbeatHandler) Inactive(context gorpc.Context) {
 
 }
 
-func (handler *_HeartbeatHandler) timeoutLoop(exitflag chan bool) {
+func (handler *_HeartbeatHandler) timeoutLoop(context gorpc.Context, exitflag chan bool) {
 
-	ticker := time.NewTicker(handler.timeout)
+	wheel := context.Pipeline().EventLoop().TimeWheel()
+
+	ticker := wheel.NewTicker(handler.timeout)
 
 	defer ticker.Stop()
 

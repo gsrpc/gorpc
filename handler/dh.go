@@ -398,7 +398,7 @@ func (handler *_CryptoClient) MessageReceived(context gorpc.Context, message *go
 
 		handler.block = block
 
-		handler.I("%s handshake -- success", context.Name())
+		handler.V("%s handshake -- success", context.Name())
 
 		context.FireActive()
 
