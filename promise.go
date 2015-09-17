@@ -55,5 +55,5 @@ func (promise *_Promise) Timeout() {
 
 func (promise *_Promise) Cancel() {
 	promise.err = ErrCanceled
-	close(promise.promise)
+	promise.promise <- nil
 }

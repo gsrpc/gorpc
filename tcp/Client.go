@@ -19,19 +19,17 @@ type Client interface {
 }
 
 type _Client struct {
-	gslogger.Log                         // Mixin Log APIs
-	sync.RWMutex                         // Mixin mutex
-	pipeline         gorpc.Pipeline      // pipeline
-	name             string              // client name
-	raddr            string              // remote service address
-	state            gorpc.State         // connect state maching
-	conn             net.Conn            // connection
-	retry            time.Duration       // reconnect timeout
-	cachedQ          chan *gorpc.Message // message
-	closedflag       chan bool           // closed flag
-	evtClosePipeline EvtClosePipeline    // event fire handler
-	evtNewPipeline   EvtNewPipeline      // event fire handler
-	cachedsize       int                 // cached size
+	gslogger.Log                      // Mixin Log APIs
+	sync.RWMutex                      // Mixin mutex
+	pipeline         gorpc.Pipeline   // pipeline
+	name             string           // client name
+	raddr            string           // remote service address
+	state            gorpc.State      // connect state maching
+	conn             net.Conn         // connection
+	retry            time.Duration    // reconnect timeout
+	closedflag       chan bool        // closed flag
+	evtClosePipeline EvtClosePipeline // event fire handler
+	evtNewPipeline   EvtNewPipeline   // event fire handler
 }
 
 // ClientBuilder .
@@ -103,13 +101,11 @@ func (builder *ClientBuilder) Connect(name string) (Client, error) {
 		evtClosePipeline: builder.evtClosePipeline,
 		evtNewPipeline:   builder.evtNewPipeline,
 		retry:            builder.retry,
-		cachedsize:       builder.cachedsize,
-		cachedQ:          make(chan *gorpc.Message, builder.cachedsize),
 	}
 
 	var err error
 
-	client.pipeline, err = builder.builder.Build(name, client)
+	client.pipeline, err = builder.builder.Build(name)
 
 	client.doconnect()
 
@@ -154,17 +150,6 @@ func (client *_Client) doconnect() {
 		client.connected(conn)
 
 	}()
-}
-
-func (client *_Client) SendMessage(message *gorpc.Message) error {
-
-	select {
-	case client.cachedQ <- message:
-	default:
-		return gorpc.ErrOverflow
-	}
-
-	return nil
 }
 
 func (client *_Client) connected(conn net.Conn) {
@@ -222,8 +207,6 @@ func (client *_Client) CloseChannel() {
 
 		client.state = gorpc.StateDisconnect
 
-		client.cachedQ = make(chan *gorpc.Message, client.cachedsize)
-
 		go client.doconnect()
 	}
 }
@@ -248,8 +231,6 @@ func (client *_Client) closeConn(conn net.Conn) {
 	if client.retry != 0 && client.state != gorpc.StateClosed {
 
 		client.state = gorpc.StateDisconnect
-
-		client.cachedQ = make(chan *gorpc.Message, client.cachedsize)
 
 		go client.doconnect()
 	}
@@ -291,17 +272,17 @@ func (client *_Client) sendLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 
 	for {
 
-		var msg *gorpc.Message
+		msg, err := client.pipeline.Sending()
 
-		select {
-		case msg = <-client.cachedQ:
-		case <-client.closedflag:
-			return
+		if err != nil {
+			client.closeConn(conn)
+			client.E("%s send err \n%s", client.raddr, err)
+			break
 		}
 
-		client.V("write message[%s] :%v", msg.Code, msg.Content)
+		client.D("write message[%s] :%v", msg.Code, msg.Content)
 
-		err := gorpc.WriteMessage(stream, msg)
+		err = gorpc.WriteMessage(stream, msg)
 
 		gserrors.Assert(err == nil, "check WriteMessage")
 

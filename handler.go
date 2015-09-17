@@ -79,6 +79,7 @@ func newContext(name string, handler Handler, pipeline *_Pipeline, prev *_Contex
 		handler:  handler,
 		pipeline: pipeline,
 		prev:     prev,
+		state:    handlerUnregister,
 	}
 
 	context.shared, _ = handler.(SharedHandler)
@@ -221,7 +222,9 @@ func (context *_Context) onUnregister() {
 		context.unlock()
 	}()
 
-	gserrors.Assert(context.state == handlerRegister, "must call register or Inactive first")
+	if context.state == handlerUnregister {
+		return
+	}
 
 	context.handler.Unregister(context)
 

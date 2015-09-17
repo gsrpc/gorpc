@@ -33,22 +33,32 @@ type Pipeline interface {
 	RemoveService(dispatcher Dispatcher)
 	// Get Handler by name
 	Handler(name string) (Handler, bool)
+	// Get Sending message
+	Sending() (*Message, error)
 }
 
 // PipelineBuilder pipeline builder
 type PipelineBuilder struct {
-	handlers []HandlerF    // handler factories
-	names    []string      // handler names
-	executor EventLoop     // event loop
-	timeout  time.Duration // rpc timeout
+	handlers   []HandlerF    // handler factories
+	names      []string      // handler names
+	executor   EventLoop     // event loop
+	timeout    time.Duration // rpc timeout
+	cachedsize int           // sending cached
 }
 
 // BuildPipeline creaet new pipeline builder
 func BuildPipeline(executor EventLoop) *PipelineBuilder {
 	return &PipelineBuilder{
-		executor: executor,
-		timeout:  gsconfig.Seconds("gorpc.timeout", 5),
+		executor:   executor,
+		timeout:    gsconfig.Seconds("gorpc.timeout", 5),
+		cachedsize: gsconfig.Int("gorpc.sendQ", 1024),
 	}
+}
+
+// CachedSize .
+func (builder *PipelineBuilder) CachedSize(cachedsize int) *PipelineBuilder {
+	builder.cachedsize = cachedsize
+	return builder
 }
 
 // Handler append new handler builder
@@ -62,25 +72,26 @@ func (builder *PipelineBuilder) Handler(name string, handlerF HandlerF) *Pipelin
 }
 
 type _Pipeline struct {
-	gslogger.Log                // Mixin log APIs
-	sync.Mutex                  // pipeline sync locker
-	Sink                        // Mixin sink
-	name         string         // pipeline name
-	header       *_Context      // pipeline head handler
-	tail         *_Context      //  tail
-	executor     EventLoop      // event loop
-	closedflag   bool           // pipeline closed flag
-	channel      MessageChannel // message channel
+	gslogger.Log                               // Mixin log APIs
+	sync.Mutex                                 // pipeline sync locker
+	Sink                                       // Mixin sink
+	name         string                        // pipeline name
+	header       *_Context                     // pipeline head handler
+	tail         *_Context                     //  tail
+	executor     EventLoop                     // event loop
+	closedflag   chan bool                     // pipeline closed flag
+	sendcached   chan func() (*Message, error) // send cache Q
 }
 
 // Build create new Pipeline
-func (builder *PipelineBuilder) Build(name string, channel MessageChannel) (Pipeline, error) {
+func (builder *PipelineBuilder) Build(name string) (Pipeline, error) {
 
 	pipeline := &_Pipeline{
-		Log:      gslogger.Get("pipeline"),
-		name:     name,
-		executor: builder.executor,
-		channel:  channel,
+		Log:        gslogger.Get("pipeline"),
+		name:       name,
+		executor:   builder.executor,
+		sendcached: make(chan func() (*Message, error), builder.cachedsize),
+		closedflag: make(chan bool),
 	}
 
 	pipeline.Sink = NewSink(name, builder.executor, pipeline, builder.timeout)
@@ -100,10 +111,6 @@ func (builder *PipelineBuilder) Build(name string, channel MessageChannel) (Pipe
 	}
 
 	return pipeline, nil
-}
-
-func (pipeline *_Pipeline) closed() bool {
-	return pipeline.closedflag
 }
 
 func (pipeline *_Pipeline) EventLoop() EventLoop {
@@ -136,7 +143,7 @@ func (pipeline *_Pipeline) Active() error {
 
 	current := pipeline.header
 
-	pipeline.closedflag = false
+	pipeline.closedflag = make(chan bool)
 
 	for current != nil {
 
@@ -157,9 +164,15 @@ func (pipeline *_Pipeline) Active() error {
 
 func (pipeline *_Pipeline) Inactive() {
 
-	if pipeline.closed() {
-		return
+	pipeline.Lock()
+
+	select {
+	case <-pipeline.closedflag:
+	default:
+		close(pipeline.closedflag)
 	}
+
+	pipeline.Unlock()
 
 	current := pipeline.header
 
@@ -200,6 +213,28 @@ func (pipeline *_Pipeline) Received(message *Message) error {
 	return nil
 }
 
+func (pipeline *_Pipeline) Sending() (*Message, error) {
+
+	for {
+		select {
+		case f := <-pipeline.sendcached:
+			message, err := f()
+
+			if err != nil {
+				return nil, err
+			}
+
+			if message != nil {
+				return message, nil
+			}
+
+		case <-pipeline.closedflag:
+			return nil, ErrClosed
+		}
+	}
+
+}
+
 func (pipeline *_Pipeline) fireActive(context *_Context) {
 	current := context.next
 
@@ -215,7 +250,7 @@ func (pipeline *_Pipeline) fireActive(context *_Context) {
 
 			context.onPanic(err)
 
-			pipeline.close()
+			pipeline.onClose()
 
 			return
 		}
@@ -228,32 +263,28 @@ func (pipeline *_Pipeline) fireActive(context *_Context) {
 
 func (pipeline *_Pipeline) Close() {
 
-	pipeline.executor.Execute(func() {
+	current := pipeline.header
 
-		pipeline.Lock()
-		defer pipeline.Unlock()
+	for current != nil {
 
-		pipeline.close()
-	})
+		current.onUnregister()
+
+		current = current.next
+	}
 
 }
 
 func (pipeline *_Pipeline) onClose() {
 
-	if closable, ok := pipeline.channel.(ClosableChannel); ok {
-		closable.CloseChannel()
-	} else {
-		pipeline.Close()
-	}
-}
+	pipeline.Lock()
 
-func (pipeline *_Pipeline) close() {
-
-	if pipeline.closedflag {
-		return
+	select {
+	case <-pipeline.closedflag:
+	default:
+		close(pipeline.closedflag)
 	}
 
-	pipeline.closedflag = true
+	pipeline.Unlock()
 
 	current := pipeline.header
 
@@ -261,20 +292,22 @@ func (pipeline *_Pipeline) close() {
 
 		current.onInactive()
 
-		current.onUnregister()
-
 		current = current.next
-	}
-
-	if closable, ok := pipeline.channel.(ClosableChannel); ok {
-		closable.CloseChannel()
 	}
 }
 
-func (pipeline *_Pipeline) send(context *_Context, message *Message) {
+func (pipeline *_Pipeline) onSend(f func() (*Message, error)) error {
+	select {
+	case pipeline.sendcached <- f:
+		return nil
+	default:
+		return ErrOverflow
+	}
+}
 
-	pipeline.executor.Execute(func() {
+func (pipeline *_Pipeline) send(context *_Context, message *Message) error {
 
+	return pipeline.onSend(func() (*Message, error) {
 		current := context.prev
 
 		var err error
@@ -284,62 +317,50 @@ func (pipeline *_Pipeline) send(context *_Context, message *Message) {
 
 			// if has error
 			if err != nil {
+
+				pipeline.W("handle sending message error\n%s", err)
+
 				context.onPanic(err)
 
-				return
+				return nil, err
 			}
 
 			if message == nil {
-				return
+				return nil, nil
 			}
 
 			current = current.prev
 		}
 
-		if message != nil {
-			err := pipeline.channel.SendMessage(message)
-			if err != nil {
-				pipeline.E("%s send message(%p) error :%s", pipeline, message, err)
-				context.onPanic(err)
-			}
-		}
+		return message, nil
 	})
 }
 
 func (pipeline *_Pipeline) SendMessage(message *Message) error {
 
-	current := pipeline.tail
+	return pipeline.onSend(func() (*Message, error) {
+		current := pipeline.tail
 
-	var err error
+		var err error
 
-	for current != nil {
-		message, err = current.onMessageSending(message)
+		for current != nil {
+			message, err = current.onMessageSending(message)
 
-		// if has error
-		if err != nil {
+			// if has error
+			if err != nil {
 
-			pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
+				pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
 
-			return err
+				return nil, err
+			}
+
+			if message == nil {
+				return nil, nil
+			}
+
+			current = current.prev
 		}
 
-		if message == nil {
-			return nil
-		}
-
-		current = current.prev
-	}
-
-	if message != nil {
-
-		err := pipeline.channel.SendMessage(message)
-
-		if err != nil {
-			pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
-
-			return err
-		}
-	}
-
-	return nil
+		return message, nil
+	})
 }

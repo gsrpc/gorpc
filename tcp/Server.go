@@ -135,15 +135,14 @@ func (server *Server) Close() {
 
 type _TCPChannel struct {
 	sync.Mutex
-	gslogger.Log                         // Mixin Log APIs
-	pipeline         gorpc.Pipeline      // pipeline
-	name             string              // name
-	raddr            string              // remote address
-	conn             net.Conn            // connection
-	state            gorpc.State         // connection state
-	cachedQ          chan *gorpc.Message // message
-	closedflag       chan bool           // closed flag
-	evtClosePipeline EvtClosePipeline    // closed handler
+	gslogger.Log                      // Mixin Log APIs
+	pipeline         gorpc.Pipeline   // pipeline
+	name             string           // name
+	raddr            string           // remote address
+	conn             net.Conn         // connection
+	state            gorpc.State      // connection state
+	closedflag       chan bool        // closed flag
+	evtClosePipeline EvtClosePipeline // closed handler
 }
 
 func (server *Server) newChannel(conn net.Conn) (err error) {
@@ -154,12 +153,11 @@ func (server *Server) newChannel(conn net.Conn) (err error) {
 		raddr:            conn.RemoteAddr().String(),
 		conn:             conn,
 		state:            gorpc.StateConnected,
-		cachedQ:          make(chan *gorpc.Message, server.cachedsize),
 		closedflag:       make(chan bool),
 		evtClosePipeline: server.evtClosePipeline,
 	}
 
-	channel.pipeline, err = server.builder.Build(fmt.Sprintf("%s:%s", server.name, conn.RemoteAddr().String()), channel)
+	channel.pipeline, err = server.builder.Build(fmt.Sprintf("%s:%s", server.name, conn.RemoteAddr().String()))
 
 	if err != nil {
 		return err
@@ -175,17 +173,6 @@ func (server *Server) newChannel(conn net.Conn) (err error) {
 	go channel.recvLoop(channel.pipeline, conn)
 
 	go channel.sendLoop(channel.pipeline, conn)
-
-	return nil
-}
-
-func (channel *_TCPChannel) SendMessage(message *gorpc.Message) error {
-
-	select {
-	case channel.cachedQ <- message:
-	case <-channel.closedflag:
-		return gorpc.ErrClosed
-	}
 
 	return nil
 }
@@ -218,11 +205,19 @@ func (channel *_TCPChannel) sendLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 
 	stream := gorpc.NewStream(conn, conn)
 
-	for msg := range channel.cachedQ {
+	for {
+
+		msg, err := channel.pipeline.Sending()
+
+		if err != nil {
+			channel.Close()
+			channel.E("[%s:%s] send err \n%s", channel.name, channel.raddr, err)
+			break
+		}
 
 		channel.V("send message %s", msg.Code)
 
-		err := gorpc.WriteMessage(stream, msg)
+		err = gorpc.WriteMessage(stream, msg)
 
 		gserrors.Assert(err == nil, "check WriteMessage")
 

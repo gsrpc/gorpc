@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gsdocker/gserrors"
 	"github.com/gsdocker/gslogger"
 )
 
@@ -130,7 +131,7 @@ func (sink *_Sink) dispatchResponse(response *Response) {
 		return
 	}
 
-	sink.W("%s unhandle response(%d)(%d)", sink.name, response.ID, response.Service)
+	sink.W("%s unhandle response(%d)(%d) %s", sink.name, response.ID, response.Service, gserrors.Newf(nil, ""))
 }
 
 func (sink *_Sink) dispatch(id uint16) (dispatcher Dispatcher, ok bool) {
