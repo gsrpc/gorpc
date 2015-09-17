@@ -41,7 +41,7 @@ func NewServer(builder *gorpc.PipelineBuilder) *Server {
 		timeout:    gsconfig.Seconds("gorpc.timeout", 5),
 		builder:    builder,
 		cachedsize: 1024,
-		eventBus:   gsevent.New("gorpc-tcp-server", 1),
+		eventBus:   gsevent.New("gorpc-tcp-server", 0),
 	}
 
 	server.eventBus.Topic(&server.evtClosePipeline)

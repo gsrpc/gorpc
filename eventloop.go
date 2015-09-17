@@ -67,10 +67,7 @@ func (loop *_EventLoop) Close() {
 }
 
 func (loop *_EventLoop) Execute(task func()) {
-	select {
-	case loop.taskQ <- task:
-	case <-loop.closed:
-	}
+	go loop.execute(task)
 }
 
 func (loop *_EventLoop) After(delay time.Duration, task func()) *timer.Timer {

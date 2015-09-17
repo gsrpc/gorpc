@@ -50,7 +50,7 @@ func BuildClient(builder *gorpc.PipelineBuilder) *ClientBuilder {
 		cachedsize: gsconfig.Int("gorpc.tcp.client.cached", 128),
 		builder:    builder,
 		retry:      time.Duration(0),
-		eventBus:   gsevent.New("gorpc-tcp-client", 1),
+		eventBus:   gsevent.New("gorpc-tcp-client", 0),
 	}
 
 	clientBuilder.eventBus.Topic(&clientBuilder.evtClosePipeline)
@@ -191,26 +191,6 @@ func (client *_Client) Close() {
 	client.pipeline.Close()
 }
 
-func (client *_Client) CloseChannel() {
-	client.Lock()
-	defer client.Unlock()
-
-	if client.conn != nil {
-		client.conn.Close()
-	}
-
-	client.conn = nil
-
-	client.pipeline.Inactive()
-
-	if client.retry != 0 && client.state != gorpc.StateClosed {
-
-		client.state = gorpc.StateDisconnect
-
-		go client.doconnect()
-	}
-}
-
 func (client *_Client) closeConn(conn net.Conn) {
 	client.Lock()
 	defer client.Unlock()
@@ -280,7 +260,7 @@ func (client *_Client) sendLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 			break
 		}
 
-		client.D("write message[%s] :%v", msg.Code, msg.Content)
+		client.V("write message[%s] :%v", msg.Code, msg.Content)
 
 		err = gorpc.WriteMessage(stream, msg)
 

@@ -186,29 +186,41 @@ func (pipeline *_Pipeline) Inactive() {
 
 func (pipeline *_Pipeline) Received(message *Message) error {
 
-	current := pipeline.header
+	pipeline.executor.Execute(func() {
+		current := pipeline.header
 
-	var err error
+		var err error
 
-	for current != nil {
+		for current != nil {
 
-		message, err = current.onMessageReceived(message)
+			message, err = current.onMessageReceived(message)
 
-		// if has error
-		if err != nil {
-			return err
+			// if has error
+			if err != nil {
+
+				pipeline.E("handle received message error\n%s", err)
+
+				return
+			}
+
+			if message == nil {
+				return
+			}
+
+			current = current.next
 		}
 
-		if message == nil {
-			return nil
+		if message != nil {
+			err = pipeline.Sink.MessageReceived(message)
+
+			if err != nil {
+
+				pipeline.E("handle received message error\n%s", err)
+
+				return
+			}
 		}
-
-		current = current.next
-	}
-
-	if message != nil {
-		return pipeline.Sink.MessageReceived(message)
-	}
+	})
 
 	return nil
 }
@@ -263,37 +275,44 @@ func (pipeline *_Pipeline) fireActive(context *_Context) {
 
 func (pipeline *_Pipeline) Close() {
 
-	current := pipeline.header
+	go func() {
+		current := pipeline.header
 
-	for current != nil {
+		for current != nil {
 
-		current.onUnregister()
+			current.onInactive()
 
-		current = current.next
-	}
+			current.onUnregister()
+
+			current = current.next
+		}
+	}()
 
 }
 
 func (pipeline *_Pipeline) onClose() {
 
-	pipeline.Lock()
+	go func() {
+		pipeline.Lock()
 
-	select {
-	case <-pipeline.closedflag:
-	default:
-		close(pipeline.closedflag)
-	}
+		select {
+		case <-pipeline.closedflag:
+		default:
+			close(pipeline.closedflag)
+		}
 
-	pipeline.Unlock()
+		pipeline.Unlock()
 
-	current := pipeline.header
+		current := pipeline.header
 
-	for current != nil {
+		for current != nil {
 
-		current.onInactive()
+			current.onInactive()
 
-		current = current.next
-	}
+			current = current.next
+		}
+	}()
+
 }
 
 func (pipeline *_Pipeline) onSend(f func() (*Message, error)) error {
