@@ -99,7 +99,7 @@ func (handler *_HeartbeatHandler) MessageReceived(context gorpc.Context, message
 
 	if message.Code == gorpc.CodeHeartbeat {
 
-		handler.V("%s recv heartbeat message", handler.context.Pipeline())
+		handler.V("%s recv heartbeat message", context.Pipeline())
 
 		if handler.timeout != 0 {
 			handler.timestamp = time.Now()
