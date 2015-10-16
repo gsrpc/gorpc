@@ -90,7 +90,7 @@ func init() {
 		}))
 	})).Listen(":13512")
 
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 10; i++ {
 		clientBuilder.Connect(fmt.Sprintf("test-%d", i))
 	}
 
