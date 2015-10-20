@@ -172,6 +172,76 @@ func ReadBool(reader Reader) (bool, error) {
 	return false, err
 }
 
+// SkipRead ..
+func SkipRead(reader Reader, tag Tag) error {
+
+	switch tag {
+	case TagI8:
+		_, err := ReadByte(reader)
+		return err
+	case TagI16:
+		_, err := ReadUInt16(reader)
+		return err
+	case TagI32:
+		_, err := ReadUInt32(reader)
+		return err
+	case TagI64:
+		_, err := ReadUInt64(reader)
+		return err
+
+	case TagString:
+		_, err := ReadString(reader)
+
+		return err
+
+	case TagTable:
+		// read fields
+		fields, err := ReadByte(reader)
+		if err != nil {
+			return err
+		}
+
+		for i := 0; i < int(fields); i++ {
+			tag, err = ReadTag(reader)
+
+			if err != nil {
+				return err
+			}
+
+			err = SkipRead(reader, tag)
+
+			if err != nil {
+				return err
+			}
+		}
+
+	default:
+
+		if byte(tag)&0xf == byte(TagList) {
+
+			length, err := ReadUInt16(reader)
+
+			if err != nil {
+				return err
+			}
+
+			tag = Tag((byte(tag) >> 4) & 0x0f)
+
+			for i := 0; i < int(length); i++ {
+				err = SkipRead(reader, tag)
+
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	}
+
+	return nil
+}
+
 //WriteByte write one byte into bytes buffer
 func WriteByte(writer Writer, v byte) error {
 	return writer.WriteByte(v)
