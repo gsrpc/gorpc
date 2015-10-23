@@ -118,7 +118,7 @@ func (sink *_Sink) Send(call *Request) (Future, error) {
 		return nil, err
 	}
 
-	sink.I("%s send request(%d:%d:%d)", sink.name, call.ID, call.Service, call.Method)
+	sink.V("%s send request(%d:%d:%d)", sink.name, call.ID, call.Service, call.Method)
 
 	return promise, nil
 }
@@ -154,7 +154,7 @@ func (sink *_Sink) dispatchRequest(message *Message) error {
 		return err
 	}
 
-	sink.I("%s received request(%d:%d:%d)", sink.name, request.ID, request.Service, request.Method)
+	sink.V("%s received request(%d:%d:%d)", sink.name, request.ID, request.Service, request.Method)
 
 	if dispatcher, ok := sink.dispatch(request.Service); ok {
 
@@ -180,7 +180,7 @@ func (sink *_Sink) dispatchRequest(message *Message) error {
 
 		sink.channel.SendMessage(message)
 
-		sink.I("%s send response(%d)(%d)", sink.name, response.ID, response.Service)
+		sink.V("%s send response(%d)(%d)", sink.name, response.ID, response.Service)
 
 		return nil
 	}
