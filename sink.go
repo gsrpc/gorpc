@@ -188,6 +188,10 @@ func (sink *_Sink) dispatchRequest(message *Message) error {
 			return nil
 		}
 
+		if response == nil {
+			return nil
+		}
+
 		var buff bytes.Buffer
 
 		err = WriteResponse(&buff, response)
