@@ -7,6 +7,7 @@ type Future interface {
 
 // Channel .
 type Channel interface {
+	Post(call *Request) error
 	Send(call *Request) (Future, error)
 }
 

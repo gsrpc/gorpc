@@ -1,16 +1,18 @@
-package tcp
+package test
 
 import (
-	"com/gsrpc/test"
 	"fmt"
 	"math/big"
 	"runtime"
 	"testing"
 	"time"
 
+	"github.com/gsrpc/gorpc/test"
+
 	"github.com/gsdocker/gslogger"
 	"github.com/gsrpc/gorpc"
 	"github.com/gsrpc/gorpc/handler"
+	"github.com/gsrpc/gorpc/tcp"
 )
 
 var log = gslogger.Get("profile")
@@ -21,6 +23,10 @@ type mockRESTful struct {
 
 func (mock *mockRESTful) Post(name string, content []byte) (err error) {
 	mock.content[name] = content
+	return nil
+}
+
+func (mock *mockRESTful) SayHello(message string) (err error) {
 	return nil
 }
 
@@ -40,7 +46,7 @@ var eventLoop = gorpc.NewEventLoop(uint32(runtime.NumCPU()), 2048, 500*time.Mill
 var G *big.Int
 var P *big.Int
 
-var clientBuilder *ClientBuilder
+var clientBuilder *tcp.ClientBuilder
 
 func init() {
 
@@ -50,7 +56,7 @@ func init() {
 
 	P, _ = new(big.Int).SetString("13196520348498300509170571968898643110806720751219744788129636326922565480984492185368038375211941297871289403061486510064429072584259746910423138674192557", 0)
 
-	clientBuilder = BuildClient(
+	clientBuilder = tcp.BuildClient(
 		gorpc.BuildPipeline(eventLoop).Handler(
 			"profile",
 			gorpc.ProfileHandler,
@@ -67,7 +73,7 @@ func init() {
 		),
 	)
 
-	go NewServer(
+	go tcp.NewServer(
 		gorpc.BuildPipeline(eventLoop).Handler(
 			"profile",
 			gorpc.ProfileHandler,
@@ -84,7 +90,7 @@ func init() {
 				return handler.NewHeartbeatHandler(5 * time.Second)
 			},
 		),
-	).EvtNewPipeline(EvtNewPipeline(func(pipeline gorpc.Pipeline) {
+	).EvtNewPipeline(tcp.EvtNewPipeline(func(pipeline gorpc.Pipeline) {
 		pipeline.AddService(test.MakeRESTful(0, &mockRESTful{
 			content: make(map[string][]byte),
 		}))
@@ -152,9 +158,15 @@ func TestConnect(t *testing.T) {
 	if _, ok := err.(*test.NotFound); !ok {
 		t.Fatal("expect (*test.NotFound)exception")
 	}
+
+	err = api.SayHello("hello world")
+
+	if err != nil {
+		t.Fatalf("call async method say hello error:%s", err)
+	}
 }
 
-func BenchmarkPost(t *testing.B) {
+func BenchmarkSync(t *testing.B) {
 	t.StopTimer()
 	client, err := clientBuilder.Connect("test")
 

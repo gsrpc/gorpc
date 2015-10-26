@@ -31,3 +31,9 @@ table C1 {
     float32     C3;
     float64     C4;
 }
+
+@gslang.POD
+table Hello {
+    int32       C1;
+    string[]    C2;
+}

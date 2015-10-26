@@ -89,6 +89,29 @@ func (sink *_Sink) Promise() (Promise, uint16) {
 	}
 }
 
+// Post .
+func (sink *_Sink) Post(call *Request) error {
+
+	var buff bytes.Buffer
+	err := WriteRequest(&buff, call)
+	if err != nil {
+		return err
+	}
+
+	message := NewMessage()
+	message.Code = CodeRequest
+	message.Content = buff.Bytes()
+
+	err = sink.channel.SendMessage(message)
+	if err != nil {
+		return err
+	}
+
+	sink.V("%s post request(%d:%d:%d)", sink.name, call.ID, call.Service, call.Method)
+
+	return nil
+}
+
 // Send .
 func (sink *_Sink) Send(call *Request) (Future, error) {
 
