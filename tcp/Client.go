@@ -7,7 +7,6 @@ import (
 
 	"github.com/gsdocker/gsconfig"
 	"github.com/gsdocker/gserrors"
-	"github.com/gsdocker/gsevent"
 	"github.com/gsdocker/gslogger"
 	"github.com/gsrpc/gorpc"
 )
@@ -19,28 +18,23 @@ type Client interface {
 }
 
 type _Client struct {
-	gslogger.Log                      // Mixin Log APIs
-	sync.RWMutex                      // Mixin mutex
-	pipeline         gorpc.Pipeline   // pipeline
-	name             string           // client name
-	raddr            string           // remote service address
-	state            gorpc.State      // connect state maching
-	conn             net.Conn         // connection
-	retry            time.Duration    // reconnect timeout
-	closedflag       chan bool        // closed flag
-	evtClosePipeline EvtClosePipeline // event fire handler
-	evtNewPipeline   EvtNewPipeline   // event fire handler
+	gslogger.Log                // Mixin Log APIs
+	sync.RWMutex                // Mixin mutex
+	pipeline     gorpc.Pipeline // pipeline
+	name         string         // client name
+	raddr        string         // remote service address
+	state        gorpc.State    // connect state maching
+	conn         net.Conn       // connection
+	retry        time.Duration  // reconnect timeout
+	closedflag   chan bool      // closed flag
 }
 
 // ClientBuilder .
 type ClientBuilder struct {
-	raddr            string                 // remote address
-	cachedsize       int                    // send queue cached size
-	builder          *gorpc.PipelineBuilder // builder
-	retry            time.Duration          // reconnect timeout
-	eventBus         gsevent.EventBus       // events
-	evtClosePipeline EvtClosePipeline       // event fire handler
-	evtNewPipeline   EvtNewPipeline         // event fire handler
+	raddr      string                 // remote address
+	cachedsize int                    // send queue cached size
+	builder    *gorpc.PipelineBuilder // builder
+	retry      time.Duration          // reconnect timeout
 }
 
 // BuildClient .
@@ -50,12 +44,7 @@ func BuildClient(builder *gorpc.PipelineBuilder) *ClientBuilder {
 		cachedsize: gsconfig.Int("gorpc.tcp.client.cached", 128),
 		builder:    builder,
 		retry:      time.Duration(0),
-		eventBus:   gsevent.New("gorpc-tcp-client", 0),
 	}
-
-	clientBuilder.eventBus.Topic(&clientBuilder.evtClosePipeline)
-
-	clientBuilder.eventBus.Topic(&clientBuilder.evtNewPipeline)
 
 	return clientBuilder
 }
@@ -72,18 +61,6 @@ func (builder *ClientBuilder) Cached(cached int) *ClientBuilder {
 	return builder
 }
 
-// EvtNewPipeline .
-func (builder *ClientBuilder) EvtNewPipeline(handler EvtNewPipeline) *ClientBuilder {
-	builder.eventBus.Subscribe(handler)
-	return builder
-}
-
-// EvtClosePipeline .
-func (builder *ClientBuilder) EvtClosePipeline(handler EvtClosePipeline) *ClientBuilder {
-	builder.eventBus.Subscribe(handler)
-	return builder
-}
-
 // Remote .
 func (builder *ClientBuilder) Remote(raddr string) *ClientBuilder {
 	builder.raddr = raddr
@@ -93,14 +70,12 @@ func (builder *ClientBuilder) Remote(raddr string) *ClientBuilder {
 // Connect .
 func (builder *ClientBuilder) Connect(name string) (Client, error) {
 	client := &_Client{
-		name:             name,
-		Log:              gslogger.Get("gorpc-tcp-client"),
-		raddr:            builder.raddr,
-		state:            gorpc.StateDisconnect,
-		closedflag:       make(chan bool),
-		evtClosePipeline: builder.evtClosePipeline,
-		evtNewPipeline:   builder.evtNewPipeline,
-		retry:            builder.retry,
+		name:       name,
+		Log:        gslogger.Get("gorpc-tcp-client"),
+		raddr:      builder.raddr,
+		state:      gorpc.StateDisconnect,
+		closedflag: make(chan bool),
+		retry:      builder.retry,
 	}
 
 	var err error
@@ -166,8 +141,6 @@ func (client *_Client) connected(conn net.Conn) {
 	client.state = gorpc.StateConnected
 
 	client.conn = conn
-
-	client.evtNewPipeline(client.pipeline)
 
 	go client.recvLoop(client.pipeline, conn)
 	go client.sendLoop(client.pipeline, conn)

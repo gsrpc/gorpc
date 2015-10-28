@@ -22,6 +22,7 @@ type mockRESTful struct {
 }
 
 func (mock *mockRESTful) Post(name string, content []byte) (err error) {
+
 	mock.content[name] = content
 	return nil
 }
@@ -47,6 +48,12 @@ var G *big.Int
 var P *big.Int
 
 var clientBuilder *tcp.ClientBuilder
+
+var stateHandler = handler.NewStateHandler(func(pipeline gorpc.Pipeline, state gorpc.State) {
+	pipeline.AddService(test.MakeRESTful(0, &mockRESTful{
+		content: make(map[string][]byte),
+	}))
+})
 
 func init() {
 
@@ -89,12 +96,13 @@ func init() {
 			func() gorpc.Handler {
 				return handler.NewHeartbeatHandler(5 * time.Second)
 			},
+		).Handler(
+			"state-handler",
+			func() gorpc.Handler {
+				return stateHandler
+			},
 		),
-	).EvtNewPipeline(tcp.EvtNewPipeline(func(pipeline gorpc.Pipeline) {
-		pipeline.AddService(test.MakeRESTful(0, &mockRESTful{
-			content: make(map[string][]byte),
-		}))
-	})).Listen(":13512")
+	).Listen(":13512")
 
 	for i := 0; i < 10; i++ {
 		clientBuilder.Connect(fmt.Sprintf("test-%d", i))

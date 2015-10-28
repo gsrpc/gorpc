@@ -8,29 +8,19 @@ import (
 
 	"github.com/gsdocker/gsconfig"
 	"github.com/gsdocker/gserrors"
-	"github.com/gsdocker/gsevent"
 	"github.com/gsdocker/gslogger"
 	"github.com/gsrpc/gorpc"
 )
 
-// EvtNewPipeline .
-type EvtNewPipeline func(pipeline gorpc.Pipeline)
-
-// EvtClosePipeline .
-type EvtClosePipeline func(pipeline gorpc.Pipeline)
-
 // Server server
 type Server struct {
-	gslogger.Log                            // Mixin Log APIs
-	sync.RWMutex                            // Mixin mutex
-	name             string                 // server name
-	timeout          time.Duration          // net trans timeout
-	listener         net.Listener           // listener
-	builder          *gorpc.PipelineBuilder // router builder
-	cachedsize       int                    // send q size
-	eventBus         gsevent.EventBus       // events
-	evtClosePipeline EvtClosePipeline       // event fire handler
-	evtNewPipeline   EvtNewPipeline         // event fire handler
+	gslogger.Log                        // Mixin Log APIs
+	sync.RWMutex                        // Mixin mutex
+	name         string                 // server name
+	timeout      time.Duration          // net trans timeout
+	listener     net.Listener           // listener
+	builder      *gorpc.PipelineBuilder // router builder
+	cachedsize   int                    // send q size
 }
 
 // NewServer create new tcp server
@@ -41,25 +31,8 @@ func NewServer(builder *gorpc.PipelineBuilder) *Server {
 		timeout:    gsconfig.Seconds("gorpc.timeout", 5),
 		builder:    builder,
 		cachedsize: 1024,
-		eventBus:   gsevent.New("gorpc-tcp-server", 0),
 	}
 
-	server.eventBus.Topic(&server.evtClosePipeline)
-
-	server.eventBus.Topic(&server.evtNewPipeline)
-
-	return server
-}
-
-// EvtNewPipeline .
-func (server *Server) EvtNewPipeline(handler EvtNewPipeline) *Server {
-	server.eventBus.Subscribe(handler)
-	return server
-}
-
-// EvtClosePipeline .
-func (server *Server) EvtClosePipeline(handler EvtClosePipeline) *Server {
-	server.eventBus.Subscribe(handler)
 	return server
 }
 
@@ -135,26 +108,24 @@ func (server *Server) Close() {
 
 type _TCPChannel struct {
 	sync.Mutex
-	gslogger.Log                      // Mixin Log APIs
-	pipeline         gorpc.Pipeline   // pipeline
-	name             string           // name
-	raddr            string           // remote address
-	conn             net.Conn         // connection
-	state            gorpc.State      // connection state
-	closedflag       chan bool        // closed flag
-	evtClosePipeline EvtClosePipeline // closed handler
+	gslogger.Log                // Mixin Log APIs
+	pipeline     gorpc.Pipeline // pipeline
+	name         string         // name
+	raddr        string         // remote address
+	conn         net.Conn       // connection
+	state        gorpc.State    // connection state
+	closedflag   chan bool      // closed flag
 }
 
 func (server *Server) newChannel(conn net.Conn) (err error) {
 
 	channel := &_TCPChannel{
-		Log:              gslogger.Get("gorpc-tcp-server"),
-		name:             server.name,
-		raddr:            conn.RemoteAddr().String(),
-		conn:             conn,
-		state:            gorpc.StateConnected,
-		closedflag:       make(chan bool),
-		evtClosePipeline: server.evtClosePipeline,
+		Log:        gslogger.Get("gorpc-tcp-server"),
+		name:       server.name,
+		raddr:      conn.RemoteAddr().String(),
+		conn:       conn,
+		state:      gorpc.StateConnected,
+		closedflag: make(chan bool),
 	}
 
 	channel.pipeline, err = server.builder.Build(fmt.Sprintf("%s:%s", server.name, conn.RemoteAddr().String()))
@@ -164,8 +135,6 @@ func (server *Server) newChannel(conn net.Conn) (err error) {
 	}
 
 	channel.pipeline.Active()
-
-	server.evtNewPipeline(channel.pipeline)
 
 	server.RLock()
 	defer server.RUnlock()
@@ -252,6 +221,4 @@ func (channel *_TCPChannel) Close() {
 	close(channel.closedflag)
 
 	channel.pipeline.Close()
-
-	channel.evtClosePipeline(channel.pipeline)
 }
