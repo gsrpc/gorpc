@@ -71,6 +71,13 @@ func (builder *PipelineBuilder) Handler(name string, handlerF HandlerF) *Pipelin
 	return builder
 }
 
+// Timeout set rpc timeout
+func (builder *PipelineBuilder) Timeout(duration time.Duration) *PipelineBuilder {
+	builder.timeout = duration
+
+	return builder
+}
+
 type _Pipeline struct {
 	gslogger.Log                               // Mixin log APIs
 	sync.Mutex                                 // pipeline sync locker

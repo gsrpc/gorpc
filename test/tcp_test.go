@@ -21,17 +21,17 @@ type mockRESTful struct {
 	content map[string][]byte
 }
 
-func (mock *mockRESTful) Post(name string, content []byte) (err error) {
+func (mock *mockRESTful) Post(callSite *gorpc.CallSite, name string, content []byte) (err error) {
 
 	mock.content[name] = content
 	return nil
 }
 
-func (mock *mockRESTful) SayHello(message string) (err error) {
+func (mock *mockRESTful) SayHello(callSite *gorpc.CallSite, message string) (err error) {
 	return nil
 }
 
-func (mock *mockRESTful) Get(name string) (retval []byte, err error) {
+func (mock *mockRESTful) Get(callSite *gorpc.CallSite, name string) (retval []byte, err error) {
 
 	val, ok := mock.content[name]
 
@@ -127,7 +127,7 @@ func TestConnect(t *testing.T) {
 
 	log.D("call Post")
 
-	err = api.Post("nil", nil)
+	err = api.Post(nil, "nil", nil)
 
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestConnect(t *testing.T) {
 
 	log.D("call Post -- success")
 
-	content, err := api.Get("nil")
+	content, err := api.Get(nil, "nil")
 
 	if err != nil {
 		t.Fatal(err)
@@ -145,9 +145,9 @@ func TestConnect(t *testing.T) {
 		t.Fatal("rpc test error")
 	}
 
-	api.Post("hello", []byte("hello world"))
+	api.Post(nil, "hello", []byte("hello world"))
 
-	content, err = api.Get("hello")
+	content, err = api.Get(nil, "hello")
 
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestConnect(t *testing.T) {
 		t.Fatal("rpc test error")
 	}
 
-	_, err = api.Get("hello2")
+	_, err = api.Get(nil, "hello2")
 
 	if err == nil {
 		t.Fatal("expect (*test.NotFound)exception")
@@ -167,7 +167,7 @@ func TestConnect(t *testing.T) {
 		t.Fatal("expect (*test.NotFound)exception")
 	}
 
-	err = api.SayHello("hello world")
+	err = api.SayHello(nil, "hello world")
 
 	if err != nil {
 		t.Fatalf("call async method say hello error:%s", err)
@@ -187,7 +187,7 @@ func BenchmarkSync(t *testing.B) {
 	t.StartTimer()
 
 	for i := 0; i < t.N; i++ {
-		err = api.Post("nil", nil)
+		err = api.Post(nil, "nil", nil)
 
 		if err != nil {
 			t.Fatal(err)
