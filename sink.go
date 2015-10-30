@@ -22,9 +22,9 @@ type _Sink struct {
 	sync.RWMutex                       // mutex
 	name         string                // name
 	timeout      time.Duration         // timeout
-	seqID        uint16                // sequence id
+	seqID        uint32                // sequence id
 	dispatchers  map[uint16]Dispatcher // register dispatchers
-	promises     map[uint16]Promise    // rpc promise
+	promises     map[uint32]Promise    // rpc promise
 	channel      MessageChannel        // channel
 	eventLoop    EventLoop             // event loop
 }
@@ -36,7 +36,7 @@ func NewSink(name string, eventLoop EventLoop, channel MessageChannel, timeout t
 		name:        name,
 		timeout:     timeout,
 		dispatchers: make(map[uint16]Dispatcher),
-		promises:    make(map[uint16]Promise),
+		promises:    make(map[uint32]Promise),
 		channel:     channel,
 		eventLoop:   eventLoop,
 	}
@@ -60,7 +60,7 @@ func (sink *_Sink) RemoveService(dispatcher Dispatcher) {
 	}
 }
 
-func (sink *_Sink) Promise() (Promise, uint16) {
+func (sink *_Sink) Promise() (Promise, uint32) {
 
 	sink.Lock()
 	defer sink.Unlock()
@@ -156,7 +156,7 @@ func (sink *_Sink) dispatchResponse(response *Response) {
 		return
 	}
 
-	sink.W("%s unhandle response(%d)(%d) %s", sink.name, response.ID, response.Service, gserrors.Newf(nil, ""))
+	sink.W("%s unhandle response(%d)(%d) %s", sink.name, response.ID, gserrors.Newf(nil, ""))
 }
 
 func (sink *_Sink) dispatch(id uint16) (dispatcher Dispatcher, ok bool) {
@@ -207,7 +207,7 @@ func (sink *_Sink) dispatchRequest(message *Message) error {
 
 		sink.channel.SendMessage(message)
 
-		sink.V("%s send response(%d)(%d)", sink.name, response.ID, response.Service)
+		sink.V("%s send response(%d)(%d)", sink.name, response.ID)
 
 		return nil
 	}

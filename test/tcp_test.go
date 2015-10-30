@@ -7,12 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gsrpc/gorpc/test"
-
 	"github.com/gsdocker/gslogger"
 	"github.com/gsrpc/gorpc"
 	"github.com/gsrpc/gorpc/handler"
 	"github.com/gsrpc/gorpc/tcp"
+	"github.com/gsrpc/gorpc/trace"
 )
 
 var log = gslogger.Get("profile")
@@ -39,7 +38,7 @@ func (mock *mockRESTful) Get(callSite *gorpc.CallSite, name string) (retval []by
 		return val, nil
 	}
 
-	return nil, test.NewNotFound()
+	return nil, NewNotFound()
 }
 
 var eventLoop = gorpc.NewEventLoop(uint32(runtime.NumCPU()), 2048, 500*time.Millisecond)
@@ -50,12 +49,25 @@ var P *big.Int
 var clientBuilder *tcp.ClientBuilder
 
 var stateHandler = handler.NewStateHandler(func(pipeline gorpc.Pipeline, state gorpc.State) {
-	pipeline.AddService(test.MakeRESTful(0, &mockRESTful{
+	pipeline.AddService(MakeRESTful(1, &mockRESTful{
 		content: make(map[string][]byte),
 	}))
 })
 
+type _MockTraceConsumer struct {
+}
+
+func (mock *_MockTraceConsumer) TraceFlag() bool {
+	return true
+}
+
+func (mock *_MockTraceConsumer) EvtRPC(evt *trace.EvtRPC) {
+	//fmt.Printf("%s\n", evt)
+}
+
 func init() {
+
+	trace.Start(1, &_MockTraceConsumer{})
 
 	gslogger.NewFlags(gslogger.ERROR | gslogger.INFO)
 
@@ -123,7 +135,7 @@ func TestConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	api := test.BindRESTful(0, client.Pipeline())
+	api := BindRESTful(1, client.Pipeline())
 
 	log.D("call Post")
 
@@ -160,11 +172,11 @@ func TestConnect(t *testing.T) {
 	_, err = api.Get(nil, "hello2")
 
 	if err == nil {
-		t.Fatal("expect (*test.NotFound)exception")
+		t.Fatal("expect (*NotFound)exception")
 	}
 
-	if _, ok := err.(*test.NotFound); !ok {
-		t.Fatal("expect (*test.NotFound)exception")
+	if _, ok := err.(*NotFound); !ok {
+		t.Fatal("expect (*NotFound)exception")
 	}
 
 	err = api.SayHello(nil, "hello world")
@@ -182,7 +194,7 @@ func BenchmarkSync(t *testing.B) {
 		t.Fatal(err)
 	}
 
-	api := test.BindRESTful(0, client.Pipeline())
+	api := BindRESTful(1, client.Pipeline())
 
 	t.StartTimer()
 
