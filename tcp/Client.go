@@ -185,7 +185,9 @@ func (client *_Client) closeConn(conn net.Conn) {
 
 		client.state = gorpc.StateDisconnect
 
-		go client.doconnect()
+		time.AfterFunc(client.retry, func() {
+			client.doconnect()
+		})
 	}
 }
 
@@ -202,7 +204,7 @@ func (client *_Client) recvLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 			break
 		}
 
-		client.V("recv message %s", msg.Code)
+		client.V("recv message[%s] :%v", msg.Code, msg.Content)
 
 		err = pipeline.Received(msg)
 

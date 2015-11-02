@@ -101,6 +101,8 @@ func (builder *PipelineBuilder) Build(name string) (Pipeline, error) {
 		closedflag: make(chan bool),
 	}
 
+	close(pipeline.closedflag)
+
 	pipeline.Sink = NewSink(name, builder.executor, pipeline, builder.timeout)
 
 	var err error
@@ -117,7 +119,7 @@ func (builder *PipelineBuilder) Build(name string) (Pipeline, error) {
 		}
 	}
 
-	return pipeline, nil
+	return pipeline, pipeline.Active()
 }
 
 func (pipeline *_Pipeline) EventLoop() EventLoop {
@@ -148,9 +150,18 @@ func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
 
 func (pipeline *_Pipeline) Active() error {
 
-	current := pipeline.header
+	pipeline.Lock()
+	select {
+	case <-pipeline.closedflag:
+		pipeline.closedflag = make(chan bool)
+	default:
+		pipeline.Unlock()
+		return nil
+	}
 
-	pipeline.closedflag = make(chan bool)
+	pipeline.Unlock()
+
+	current := pipeline.header
 
 	for current != nil {
 
@@ -175,6 +186,8 @@ func (pipeline *_Pipeline) Inactive() {
 
 	select {
 	case <-pipeline.closedflag:
+		pipeline.Unlock()
+		return
 	default:
 		close(pipeline.closedflag)
 	}
@@ -274,26 +287,32 @@ func (pipeline *_Pipeline) fireActive(context *_Context) {
 			return
 		}
 
-		pipeline.V("%s active handler(%s)", pipeline, current)
-
 		current = current.next
 	}
 }
 
 func (pipeline *_Pipeline) Close() {
 
-	go func() {
-		current := pipeline.header
+	pipeline.Lock()
 
-		for current != nil {
+	select {
+	case <-pipeline.closedflag:
+	default:
+		close(pipeline.closedflag)
+	}
 
-			current.onInactive()
+	pipeline.Unlock()
 
-			current.onUnregister()
+	current := pipeline.header
 
-			current = current.next
-		}
-	}()
+	for current != nil {
+
+		current.onInactive()
+
+		current.onUnregister()
+
+		current = current.next
+	}
 
 }
 
@@ -370,6 +389,7 @@ func (pipeline *_Pipeline) SendMessage(message *Message) error {
 		var err error
 
 		for current != nil {
+
 			message, err = current.onMessageSending(message)
 
 			// if has error

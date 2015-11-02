@@ -207,7 +207,7 @@ func (sink *_Sink) dispatchRequest(message *Message) error {
 
 		sink.channel.SendMessage(message)
 
-		sink.V("%s send response(%d)(%d)", sink.name, response.ID)
+		sink.V("[%s] send response(%d)(%d)", sink.name, response.ID, response.Exception)
 
 		return nil
 	}

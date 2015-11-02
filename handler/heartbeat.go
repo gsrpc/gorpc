@@ -89,7 +89,7 @@ func (handler *_HeartbeatHandler) timeoutLoop(context gorpc.Context, exitflag ch
 			handler.V("%s send heartbeat message", handler.context.Pipeline())
 
 		case <-exitflag:
-			handler.I("exit heartbeat loop .....................")
+			handler.V("exit heartbeat loop .....................")
 			return
 		}
 	}

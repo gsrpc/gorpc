@@ -206,8 +206,6 @@ func (handler *_CryptoServer) MessageReceived(context gorpc.Context, message *go
 
 		handler.block = block
 
-		handler.V("%s handshake -- success", context.Name())
-
 		handler.device = whoAmI.ID
 
 		context.FireActive()
@@ -220,12 +218,10 @@ func (handler *_CryptoServer) MessageReceived(context gorpc.Context, message *go
 
 		handler.cached = nil
 
+		handler.V("%s handshake -- success", context.Name())
+
 		return nil, nil
 
-	}
-
-	if message.Code == gorpc.CodeHeartbeat {
-		return message, nil
 	}
 
 	blocksize := handler.block.BlockSize()
@@ -285,10 +281,10 @@ type _CryptoClient struct {
 }
 
 // NewCryptoClient .
-func NewCryptoClient(device *gorpc.Device, G, P *big.Int) gorpc.Handler {
+func NewCryptoClient(device *gorpc.Device, dhKey *DHKey) gorpc.Handler {
 	return &_CryptoClient{
 		Log:    gslogger.Get("crpyto-client"),
-		dhKey:  NewDHKey(G, P),
+		dhKey:  dhKey,
 		device: device,
 	}
 }

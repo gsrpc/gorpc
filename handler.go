@@ -248,7 +248,9 @@ func (context *_Context) onMessageSending(message *Message) (ret *Message, err e
 }
 
 func (context *_Context) onMessageReceived(message *Message) (ret *Message, err error) {
+
 	context.lock()
+
 	defer func() {
 
 		if e := recover(); e != nil {
