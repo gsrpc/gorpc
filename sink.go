@@ -156,7 +156,7 @@ func (sink *_Sink) dispatchResponse(response *Response) {
 		return
 	}
 
-	sink.W("%s unhandle response(%d)(%d) %s", sink.name, response.ID, gserrors.Newf(nil, ""))
+	sink.W("%s unhandle response(%d) %s", sink.name, response.ID, gserrors.Newf(nil, ""))
 }
 
 func (sink *_Sink) dispatch(id uint16) (dispatcher Dispatcher, ok bool) {

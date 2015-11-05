@@ -119,7 +119,7 @@ func (builder *PipelineBuilder) Build(name string) (Pipeline, error) {
 		}
 	}
 
-	return pipeline, pipeline.Active()
+	return pipeline, err
 }
 
 func (pipeline *_Pipeline) EventLoop() EventLoop {
@@ -248,6 +248,7 @@ func (pipeline *_Pipeline) Received(message *Message) error {
 func (pipeline *_Pipeline) Sending() (*Message, error) {
 
 	for {
+
 		select {
 		case f := <-pipeline.sendcached:
 			message, err := f()
@@ -345,8 +346,8 @@ func (pipeline *_Pipeline) onSend(f func() (*Message, error)) error {
 	select {
 	case pipeline.sendcached <- f:
 		return nil
-	default:
-		return ErrOverflow
+	case <-pipeline.closedflag:
+		return nil
 	}
 }
 
