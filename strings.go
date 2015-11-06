@@ -7,5 +7,5 @@ func (device *Device) String() string {
 }
 
 func (named *NamedService) String() string {
-	return fmt.Sprintf("%s:%s-%s:%d", named.NodeName, named.Name, named.DispatchID, named.VNodes)
+	return fmt.Sprintf("%s:%s-%d:%d", named.NodeName, named.Name, named.DispatchID, named.VNodes)
 }
