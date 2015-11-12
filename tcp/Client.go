@@ -122,6 +122,8 @@ func (client *_Client) doconnect() {
 			return
 		}
 
+		conn.(*net.TCPConn).SetKeepAlive(true)
+
 		client.connected(conn)
 
 	}()
