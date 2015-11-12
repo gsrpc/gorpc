@@ -1,7 +1,12 @@
 package gorpc
 
 import (
+	"bufio"
 	"errors"
+	"io"
+	"math"
+	"regexp"
+	"strconv"
 	"sync"
 
 	"github.com/gsdocker/gserrors"
@@ -12,6 +17,13 @@ var (
 	ErrRegistryNotFound = errors.New("search found nothing")
 )
 
+var registryRegex = regexp.MustCompile(`(?P<name>[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*)=(?P<id>[0-9]+)`)
+
+// Errors
+var (
+	ErrRegistry = errors.New("load registry file error")
+)
+
 // Registry the service registry
 type Registry interface {
 	// Update update the registry
@@ -20,6 +32,8 @@ type Registry interface {
 	ServiceName(id uint16) string
 	// ServiceID get service id by service name
 	ServiceID(name string) uint16
+	// Load load registry from io.Reader
+	Load(r io.Reader, name string)
 }
 
 type _Registry struct {
@@ -34,6 +48,63 @@ func NewRegistry() Registry {
 		name: make(map[string]uint16),
 		id:   make(map[uint16]string),
 	}
+}
+
+func (registry *_Registry) Load(origin io.Reader, name string) {
+	reader := bufio.NewReader(origin)
+
+	lines := 0
+
+	items := make(map[string]uint16)
+
+	for {
+		line, err := reader.ReadString('\n')
+
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+
+			gserrors.Panicf(err, "read registry file error :%s", name)
+		}
+
+		tokens := registryRegex.FindStringSubmatch(line)
+
+		if tokens == nil {
+			gserrors.Panicf(ErrRegistry, "load registry file error: invalid format\n\t%s(%d)", name, lines)
+		}
+
+		serviceName := ""
+
+		serviceID := uint16(0)
+
+		for i, name := range registryRegex.SubexpNames() {
+			if name == "name" {
+				serviceName = tokens[i]
+			}
+
+			if name == "id" {
+				val, err := strconv.ParseInt(tokens[i], 0, 32)
+
+				if err != nil {
+					gserrors.Panicf(err, "load registry file error: invalid format\n\t%s(%d)", name, lines)
+				}
+
+				if val > math.MaxUint16 {
+					gserrors.Panicf(ErrRegistry, "load registry file error: id out of range\n\t%s(%d)", name, lines)
+				}
+
+				serviceID = uint16(val)
+			}
+		}
+
+		items[serviceName] = serviceID
+
+		lines++
+
+	}
+
+	registry.Update(items)
 }
 
 func (registry *_Registry) Update(items map[string]uint16) {
@@ -76,6 +147,11 @@ func (registry *_Registry) ServiceID(name string) uint16 {
 }
 
 var registry = NewRegistry()
+
+// RegistryLoad load registry table from io.Reader
+func RegistryLoad(r io.Reader, name string) {
+	registry.Load(r, name)
+}
 
 // RegistryUpdate update default registry
 func RegistryUpdate(items map[string]uint16) {
