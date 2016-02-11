@@ -82,7 +82,7 @@ func init() {
 		).Handler(
 			"dh-client",
 			func() gorpc.Handler {
-				return handler.NewCryptoClient(gorpc.NewDevice(), G, P)
+				return handler.NewCryptoClient(gorpc.NewDevice(), handler.NewDHKey(G, P))
 			},
 		).Handler(
 			"heatbeat-client",
