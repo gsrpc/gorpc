@@ -1,6 +1,7 @@
-package net
+package tcp
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -11,39 +12,49 @@ import (
 	"github.com/gsrpc/gorpc"
 )
 
-// TCPServer server
-type TCPServer struct {
+// Server server
+type Server struct {
 	gslogger.Log                        // Mixin Log APIs
 	sync.RWMutex                        // Mixin mutex
 	name         string                 // server name
 	timeout      time.Duration          // net trans timeout
 	listener     net.Listener           // listener
 	builder      *gorpc.PipelineBuilder // router builder
+	cachedsize   int                    // send q size
 }
 
-// NewTCPServer create new tcp server
-func NewTCPServer(builder *gorpc.PipelineBuilder) *TCPServer {
-	return &TCPServer{
-		name:    "rpc-tcp-server",
-		Log:     gslogger.Get("rpc-tcp-server"),
-		timeout: gsconfig.Seconds("gorpc.timeout", 5),
-		builder: builder,
+// NewServer create new tcp server
+func NewServer(builder *gorpc.PipelineBuilder) *Server {
+	server := &Server{
+		name:       "gorpc-tcp-server",
+		Log:        gslogger.Get("rpc-tcp-server"),
+		timeout:    gsconfig.Seconds("gorpc.timeout", 5),
+		builder:    builder,
+		cachedsize: 1024,
 	}
+
+	return server
 }
 
 // Name .
-func (server *TCPServer) Name(name string) *TCPServer {
+func (server *Server) Name(name string) *Server {
 	server.name = name
 	return server
 }
 
 // Timeout .
-func (server *TCPServer) Timeout(timeout time.Duration) *TCPServer {
+func (server *Server) Timeout(timeout time.Duration) *Server {
 	server.timeout = timeout
 	return server
 }
 
-func (server *TCPServer) open(laddr string) (net.Listener, error) {
+// Cached .
+func (server *Server) Cached(cached int) *Server {
+	server.cachedsize = cached
+	return server
+}
+
+func (server *Server) open(laddr string) (net.Listener, error) {
 	server.Lock()
 	defer server.Unlock()
 
@@ -59,7 +70,7 @@ func (server *TCPServer) open(laddr string) (net.Listener, error) {
 }
 
 // Listen .
-func (server *TCPServer) Listen(laddr string) error {
+func (server *Server) Listen(laddr string) error {
 
 	listen, err := server.open(laddr)
 
@@ -82,7 +93,7 @@ func (server *TCPServer) Listen(laddr string) error {
 }
 
 // Close .
-func (server *TCPServer) Close() {
+func (server *Server) Close() {
 	server.Lock()
 	defer server.Unlock()
 
@@ -103,23 +114,27 @@ type _TCPChannel struct {
 	raddr        string         // remote address
 	conn         net.Conn       // connection
 	state        gorpc.State    // connection state
+	closedflag   chan bool      // closed flag
 }
 
-func (server *TCPServer) newChannel(conn net.Conn) (err error) {
+func (server *Server) newChannel(conn net.Conn) (err error) {
 
 	channel := &_TCPChannel{
-		Log:   gslogger.Get("tcp-server"),
-		name:  server.name,
-		raddr: conn.RemoteAddr().String(),
-		conn:  conn,
-		state: gorpc.StateConnected,
+		Log:        gslogger.Get("gorpc-tcp-server"),
+		name:       server.name,
+		raddr:      conn.RemoteAddr().String(),
+		conn:       conn,
+		state:      gorpc.StateConnected,
+		closedflag: make(chan bool),
 	}
 
-	channel.pipeline, err = server.builder.Build(conn.RemoteAddr().String())
+	channel.pipeline, err = server.builder.Build(fmt.Sprintf("%s:%s", server.name, conn.RemoteAddr().String()))
 
 	if err != nil {
 		return err
 	}
+
+	channel.pipeline.Active()
 
 	server.RLock()
 	defer server.RUnlock()
@@ -142,11 +157,16 @@ func (channel *_TCPChannel) recvLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 
 		if err != nil {
 			channel.E("[%s:%s] recv message error \n%s", channel.name, channel.raddr, err)
-			channel.close(conn)
+			channel.Close()
 			break
 		}
 
-		pipeline.ChannelWrite(msg)
+		err = pipeline.Received(msg)
+
+		if err == gorpc.ErrClosed {
+			channel.Close()
+			break
+		}
 	}
 }
 
@@ -156,17 +176,15 @@ func (channel *_TCPChannel) sendLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 
 	for {
 
-		msg, err := pipeline.ChannelRead()
+		msg, err := channel.pipeline.Sending()
 
-		if err == gorpc.ErrClosed {
-			channel.close(conn)
+		if err != nil {
+			channel.Close()
+			channel.E("[%s:%s] send err \n%s", channel.name, channel.raddr, err)
 			break
 		}
 
-		if err != nil {
-			channel.E("pipeline write error\n%s", err)
-			continue
-		}
+		channel.V("send message %s", msg.Code)
 
 		err = gorpc.WriteMessage(stream, msg)
 
@@ -175,32 +193,32 @@ func (channel *_TCPChannel) sendLoop(pipeline gorpc.Pipeline, conn net.Conn) {
 		_, err = stream.Flush()
 
 		if err != nil {
-			channel.close(conn)
+			channel.Close()
 			channel.E("[%s:%s] send err \n%s", channel.name, channel.raddr, err)
 			break
 		}
+
+		channel.V("send message %s -- success", msg.Code)
 	}
+}
+
+func (channel *_TCPChannel) CloseChannel() {
+	channel.Close()
 }
 
 func (channel *_TCPChannel) Close() {
-	channel.close(channel.conn)
-}
-
-func (channel *_TCPChannel) close(conn net.Conn) {
-
 	channel.Lock()
 	defer channel.Unlock()
 
-	if channel.conn != nil {
-		channel.I("close tcp connection %s(%p)", conn.RemoteAddr(), conn)
-		channel.conn.Close()
-		channel.conn = nil
+	if channel.state == gorpc.StateClosed {
+		return
 	}
 
-	if channel.pipeline != nil {
-		channel.pipeline.Close()
-		channel.I("close  pipeline %s(%p)", channel.name, channel.pipeline)
-		channel.pipeline = nil
-	}
+	channel.state = gorpc.StateClosed
 
+	channel.conn.Close()
+
+	close(channel.closedflag)
+
+	channel.pipeline.Close()
 }

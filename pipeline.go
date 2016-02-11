@@ -2,461 +2,412 @@ package gorpc
 
 import (
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"github.com/gsdocker/gsconfig"
-	"github.com/gsdocker/gserrors"
 	"github.com/gsdocker/gslogger"
 )
 
-// Context .
-type Context interface {
-	// Source get pipeline source
-	Source() string
-
-	String() string
-
-	Close()
-	// write open event into write pipeline
-	Open() error
-	// Write write message into read pipeline
-	WriteReadPipline(message *Message)
-	// Write write message into write pipeline
-	WriteWritePipline(message *Message)
-	// GetHandler .
-	GetHandler(name string) (Handler, bool)
-}
-
-// Handler gorpc handler
-type Handler interface {
-	OpenHandler(context Context) error
-	CloseHandler(context Context)
-	HandleWrite(context Context, message *Message) (*Message, error)
-	HandleRead(context Context, message *Message) (*Message, error)
-	HandleError(context Context, err error) error
-}
-
-// HandlerF handler create method
-type HandlerF func() Handler
-
-// Pipeline .
+// Pipeline Channel handlers pipeline
 type Pipeline interface {
+	String() string
+	// Name pipeline name
+	Name() string
+	// Close close pipeline
 	Close()
-	Source() string
-	ChannelWrite(message *Message) error
-	ChannelRead() (*Message, error)
+	// Active trans pipeline state to active state
+	Active() error
+	// Inactive trans pipeline state to inactive state
+	Inactive()
+	// Received .
+	Received(message *Message) error
+	// EventLoop .
+	EventLoop() EventLoop
+	// Channel implement channel interface
+	Channel
+	// SendMessage .
+	SendMessage(message *Message) error
+	// AddService add new service
+	AddService(dispatcher Dispatcher)
+	// RemoveService remove service
+	RemoveService(dispatcher Dispatcher)
+	// Get Handler by name
 	Handler(name string) (Handler, bool)
+	// Get Sending message
+	Sending() (*Message, error)
 }
 
-// PipelineBuilder .
+// PipelineBuilder pipeline builder
 type PipelineBuilder struct {
-	creators   []HandlerF // handler creators
-	names      []string   // handler names
-	cachedsize int        // cachedsize
-
+	handlers   []HandlerF    // handler factories
+	names      []string      // handler names
+	executor   EventLoop     // event loop
+	timeout    time.Duration // rpc timeout
+	cachedsize int           // sending cached
 }
 
-// BuildPipeline .
-func BuildPipeline() *PipelineBuilder {
+// BuildPipeline creaet new pipeline builder
+func BuildPipeline(executor EventLoop) *PipelineBuilder {
 	return &PipelineBuilder{
-		cachedsize: gsconfig.Int("gorpc.pipeline.cached", 8),
+		executor:   executor,
+		timeout:    gsconfig.Seconds("gorpc.timeout", 5),
+		cachedsize: gsconfig.Int("gorpc.sendQ", 1024),
 	}
 }
 
-// CacheSize .
-func (builder *PipelineBuilder) CacheSize(size int) *PipelineBuilder {
-	builder.cachedsize = size
+// CachedSize .
+func (builder *PipelineBuilder) CachedSize(cachedsize int) *PipelineBuilder {
+	builder.cachedsize = cachedsize
 	return builder
 }
 
-// Handler .
-func (builder *PipelineBuilder) Handler(name string, f HandlerF) *PipelineBuilder {
-	builder.creators = append(builder.creators, f)
+// Handler append new handler builder
+func (builder *PipelineBuilder) Handler(name string, handlerF HandlerF) *PipelineBuilder {
+
+	builder.handlers = append(builder.handlers, handlerF)
+
 	builder.names = append(builder.names, name)
+
 	return builder
 }
 
-// Build create real pipline
+// Timeout set rpc timeout
+func (builder *PipelineBuilder) Timeout(duration time.Duration) *PipelineBuilder {
+	builder.timeout = duration
+
+	return builder
+}
+
+type _Pipeline struct {
+	gslogger.Log                               // Mixin log APIs
+	sync.Mutex                                 // pipeline sync locker
+	Sink                                       // Mixin sink
+	name         string                        // pipeline name
+	header       *_Context                     // pipeline head handler
+	tail         *_Context                     //  tail
+	executor     EventLoop                     // event loop
+	closedflag   chan bool                     // pipeline closed flag
+	sendcached   chan func() (*Message, error) // send cache Q
+}
+
+// Build create new Pipeline
 func (builder *PipelineBuilder) Build(name string) (Pipeline, error) {
 
 	pipeline := &_Pipeline{
-		Log:        gslogger.Get("pipline"),
+		Log:        gslogger.Get("pipeline"),
 		name:       name,
-		cachedsize: builder.cachedsize,
-		refcounter: 1,
-		readQ:      make(chan func() (*Message, error), builder.cachedsize),
-		writeQ:     make(chan func() error, builder.cachedsize),
+		executor:   builder.executor,
+		sendcached: make(chan func() (*Message, error), builder.cachedsize),
+		closedflag: make(chan bool),
 	}
 
-	for id, createf := range builder.creators {
-		pipeline.addHandler(builder.names[id], createf())
+	close(pipeline.closedflag)
+
+	pipeline.Sink = NewSink(name, builder.executor, pipeline, builder.timeout)
+
+	var err error
+
+	for i, f := range builder.handlers {
+		pipeline.tail, err = newContext(builder.names[i], f(), pipeline, pipeline.tail)
+
+		if pipeline.header == nil {
+			pipeline.header = pipeline.tail
+		}
+
+		if err != nil {
+			return nil, err
+		}
 	}
-
-	go pipeline.writeLoop()
-
-	err := pipeline.open(pipeline.header)
 
 	return pipeline, err
 }
 
-type _Handler struct {
-	sync.Mutex            // Mixin mutex
-	name       string     //handler name
-	Handler               // Mixin handler
-	Next       *_Handler  // list next node
-	Prev       *_Handler  // list prev node
-	pipeline   *_Pipeline // pipline belongs
-	closed     bool       // closed
-}
-
-func (handler *_Handler) _Close() {
-	if !handler.closed {
-		handler.CloseHandler(handler)
-		handler.closed = true
-	}
-}
-
-func (handler *_Handler) String() string {
-	return handler.name
-}
-
-func (handler *_Handler) Source() string {
-	return handler.pipeline.Source()
-}
-
-func (handler *_Handler) Close() {
-	handler.pipeline.Close()
-}
-
-func (handler *_Handler) WriteReadPipline(message *Message) {
-	handler.pipeline.writeReadPipline(handler.Prev, message)
-}
-
-func (handler *_Handler) WriteWritePipline(message *Message) {
-	handler.pipeline.writeWritePipline(handler.Next, message)
-}
-
-func (handler *_Handler) Open() error {
-	return handler.pipeline.open(handler.Next)
-}
-
-func (handler *_Handler) GetHandler(name string) (Handler, bool) {
-	return handler.pipeline.Handler(name)
-}
-
-// _Pipeline .
-type _Pipeline struct {
-	sync.Mutex                                 // Mutex
-	gslogger.Log                               // Mixin log APIs
-	name         string                        // pipline name
-	header       *_Handler                     // handler list header
-	tail         *_Handler                     // handler list tail
-	cachedsize   int                           // cachedsize
-	readQ        chan func() (*Message, error) // message readQ
-	writeQ       chan func() error             // message readQ
-	refcounter   int32                         // refcounter
-	closed       bool                          // closed
-}
-
-func (pipeline *_Pipeline) Source() string {
-	return pipeline.name
-}
-
-func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
-
-	current := pipeline.header
-
-	for current != nil {
-		if current.name == name {
-			return current.Handler, true
-		}
-
-		current = current.Next
-	}
-
-	return nil, false
+func (pipeline *_Pipeline) EventLoop() EventLoop {
+	return pipeline.executor
 }
 
 func (pipeline *_Pipeline) String() string {
 	return pipeline.name
 }
 
-func (pipeline *_Pipeline) ChannelWrite(message *Message) (err error) {
-
-	return pipeline.writeWritePipline(pipeline.header, message)
-
+func (pipeline *_Pipeline) Name() string {
+	return pipeline.name
 }
 
-func (pipeline *_Pipeline) writeLoop() {
+func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
+	current := pipeline.header
 
-	for handleWrite := range pipeline.writeQ {
-		handleWrite()
-	}
-}
-
-func (pipeline *_Pipeline) ChannelRead() (*Message, error) {
-
-	for {
-		handleRead, ok := <-pipeline.readQ
-
-		if !ok {
-			return nil, ErrClosed
+	for current != nil {
+		if current.Name() == name {
+			return current.handler, true
 		}
 
-		message, err := handleRead()
-
-		if err == ErrSkip {
-			continue
-		}
-
-		return message, err
+		current = current.next
 	}
 
+	return nil, false
 }
 
-func (pipeline *_Pipeline) Close() {
+func (pipeline *_Pipeline) Active() error {
 
 	pipeline.Lock()
-	defer pipeline.Unlock()
-
-	if pipeline.closed {
-		return
-	}
-
-	pipeline.closed = true
-
-	atomic.AddInt32(&pipeline.refcounter, -1)
-
-	close(pipeline.writeQ)
-
-	close(pipeline.readQ)
-
-	context := pipeline.header
-
-	for context != nil {
-
-		pipeline.protectCall(context, func(handler *_Handler) error {
-			handler._Close()
-			return nil
-		})
-
-		context = context.Next
-	}
-}
-
-func (pipeline *_Pipeline) protectCall(handler *_Handler, f func(handler *_Handler) error) (err error) {
-
-	handler.Lock()
-	defer handler.Unlock()
-
-	err = f(handler)
-
-	return
-}
-
-func (pipeline *_Pipeline) open(handler *_Handler) (err error) {
-
-	for context := handler; context != nil; context = context.Next {
-
-		pipeline.V("open handler(%s)", context)
-
-		err = pipeline.protectCall(context, func(h *_Handler) error {
-			return context.OpenHandler(context)
-		})
-
-		pipeline.V("open handler(%s) -- finish", context)
-
-		if err != nil {
-			if err == ErrSkip {
-				err = nil
-			}
-
-			return
-		}
-	}
-
-	return
-}
-
-func (pipeline *_Pipeline) writeReadPipline(handler *_Handler, message *Message) (err error) {
-
-	defer func() {
-		if e := recover(); e != nil {
-			err = ErrClosed
-		}
-	}()
-
 	select {
-	case pipeline.readQ <- func() (*Message, error) {
-		return pipeline.handleRead(handler, message)
-	}:
-
+	case <-pipeline.closedflag:
+		pipeline.closedflag = make(chan bool)
 	default:
-		err := gserrors.Newf(ErrOverflow, "pipeline readQ overflow")
-		pipeline.handleReadError(pipeline.header, handler, err)
+		pipeline.Unlock()
+		return nil
 	}
 
-	return
-}
+	pipeline.Unlock()
 
-func (pipeline *_Pipeline) writeWritePipline(handler *_Handler, message *Message) (err error) {
+	current := pipeline.header
 
-	defer func() {
-		if e := recover(); e != nil {
-			err = ErrClosed
-		}
-	}()
+	for current != nil {
 
-	select {
-	case pipeline.writeQ <- func() error {
-		err := pipeline.handleWrite(handler, message)
-		return err
-	}:
+		pipeline.V("%s active handler(%s)", pipeline, current)
 
-	default:
-		err := gserrors.Newf(ErrOverflow, "pipeline readQ overflow")
-		pipeline.handleWriteError(pipeline.header, handler, err)
-	}
-
-	return
-}
-
-func (pipeline *_Pipeline) handleWrite(handler *_Handler, message *Message) error {
-
-	var err error
-
-	context := handler
-
-	for context != nil {
-
-		pipeline.V("%s handleWrite handler(%s)", pipeline.name, context)
-
-		err = pipeline.protectCall(context, func(*_Handler) error {
-
-			message, err = context.HandleWrite(context, message)
-
-			if message == nil && err == nil {
-				err = ErrSkip
-			}
-
-			return err
-		})
-
-		pipeline.V("%s handleWrite handler(%s) -- finish", pipeline.name, context)
-
-		if err != nil {
-
+		if err := current.onActive(); err != nil {
 			if err == ErrSkip {
 				return nil
 			}
-
-			pipeline.handleWriteError(context, handler, err)
 			return err
 		}
 
-		context = context.Next
+		current = current.next
 	}
 
 	return nil
 }
 
-func (pipeline *_Pipeline) handleRead(handler *_Handler, message *Message) (*Message, error) {
+func (pipeline *_Pipeline) Inactive() {
 
-	var err error
+	pipeline.Lock()
 
-	context := handler
+	select {
+	case <-pipeline.closedflag:
+		pipeline.Unlock()
+		return
+	default:
+		close(pipeline.closedflag)
+	}
 
-	for context != nil {
+	pipeline.Unlock()
 
-		err = pipeline.protectCall(context, func(*_Handler) error {
-			message, err = context.HandleRead(context, message)
+	current := pipeline.header
 
-			if message == nil && err == nil {
-				err = ErrSkip
+	for current != nil {
+
+		current.onInactive()
+
+		current = current.next
+	}
+}
+
+func (pipeline *_Pipeline) Received(message *Message) error {
+
+	pipeline.executor.Execute(func() {
+		current := pipeline.header
+
+		var err error
+
+		for current != nil {
+
+			message, err = current.onMessageReceived(message)
+
+			// if has error
+			if err != nil {
+
+				pipeline.E("handle received message error\n%s", err)
+
+				return
 			}
 
-			return err
-		})
+			if message == nil {
+				return
+			}
 
-		if err != nil {
+			current = current.next
+		}
+
+		if message != nil {
+			err = pipeline.Sink.MessageReceived(message)
+
+			if err != nil {
+
+				pipeline.E("handle received message error\n%s", err)
+
+				return
+			}
+		}
+	})
+
+	return nil
+}
+
+func (pipeline *_Pipeline) Sending() (*Message, error) {
+
+	for {
+
+		select {
+		case f := <-pipeline.sendcached:
+			message, err := f()
+
+			if err != nil {
+				return nil, err
+			}
+
+			if message != nil {
+				return message, nil
+			}
+
+		case <-pipeline.closedflag:
+			return nil, ErrClosed
+		}
+	}
+
+}
+
+func (pipeline *_Pipeline) fireActive(context *_Context) {
+	current := context.next
+
+	for current != nil {
+
+		if err := current.onActive(); err != nil {
+
 			if err == ErrSkip {
-				return message, err
+				return
 			}
 
-			pipeline.handleReadError(context, handler, err)
-			return nil, err
-		}
+			pipeline.E("active %s error :%s", current, err)
 
-		context = context.Prev
-	}
+			context.onPanic(err)
 
-	return message, nil
-}
+			pipeline.onClose()
 
-func (pipeline *_Pipeline) handleReadError(context *_Handler, source *_Handler, err error) {
-
-	for context != source {
-
-		pipeline.protectCall(context, func(*_Handler) error {
-			err = context.HandleError(context, err)
-			return nil
-		})
-
-		if err == nil {
 			return
 		}
 
-		context = context.Next
+		current = current.next
 	}
-
-	context.HandleError(context, err)
 }
 
-func (pipeline *_Pipeline) handleWriteError(context *_Handler, source *_Handler, err error) {
+func (pipeline *_Pipeline) Close() {
 
-	for context != source {
+	pipeline.Lock()
 
-		pipeline.V("handleError handler(%s)", context)
-
-		pipeline.protectCall(context, func(*_Handler) error {
-			err = context.HandleError(context, err)
-			return nil
-		})
-
-		pipeline.V("handleError handler(%s) -- finish", context)
-
-		if err == nil {
-			return
-		}
-
-		context = context.Prev
+	select {
+	case <-pipeline.closedflag:
+	default:
+		close(pipeline.closedflag)
 	}
 
-	context.HandleError(context, err)
+	pipeline.Unlock()
+
+	current := pipeline.header
+
+	for current != nil {
+
+		current.onInactive()
+
+		current.onUnregister()
+
+		current = current.next
+	}
+
 }
 
-func (pipeline *_Pipeline) addHandler(name string, handler Handler) *_Handler {
+func (pipeline *_Pipeline) onClose() {
 
-	if pipeline.tail == nil {
-		pipeline.header = &_Handler{
-			Handler:  handler,
-			pipeline: pipeline,
-			name:     name,
+	go func() {
+		pipeline.Lock()
+
+		select {
+		case <-pipeline.closedflag:
+		default:
+			close(pipeline.closedflag)
 		}
 
-		pipeline.tail = pipeline.header
+		pipeline.Unlock()
 
-		return pipeline.tail
+		current := pipeline.header
+
+		for current != nil {
+
+			current.onInactive()
+
+			current = current.next
+		}
+	}()
+
+}
+
+func (pipeline *_Pipeline) onSend(f func() (*Message, error)) error {
+	select {
+	case pipeline.sendcached <- f:
+		return nil
+	case <-pipeline.closedflag:
+		return nil
 	}
+}
 
-	pipeline.tail.Next = &_Handler{
-		Handler:  handler,
-		Prev:     pipeline.tail,
-		pipeline: pipeline,
-		name:     name,
-	}
+func (pipeline *_Pipeline) send(context *_Context, message *Message) error {
 
-	pipeline.tail = pipeline.tail.Next
+	return pipeline.onSend(func() (*Message, error) {
+		current := context.prev
 
-	return pipeline.tail
+		var err error
+
+		for current != nil {
+			message, err = current.onMessageSending(message)
+
+			// if has error
+			if err != nil {
+
+				pipeline.W("handle sending message error\n%s", err)
+
+				context.onPanic(err)
+
+				return nil, err
+			}
+
+			if message == nil {
+				return nil, nil
+			}
+
+			current = current.prev
+		}
+
+		return message, nil
+	})
+}
+
+func (pipeline *_Pipeline) SendMessage(message *Message) error {
+
+	return pipeline.onSend(func() (*Message, error) {
+		current := pipeline.tail
+
+		var err error
+
+		for current != nil {
+
+			message, err = current.onMessageSending(message)
+
+			// if has error
+			if err != nil {
+
+				pipeline.E("pipeline(%s) send message error :%s", pipeline.name, err)
+
+				return nil, err
+			}
+
+			if message == nil {
+				return nil, nil
+			}
+
+			current = current.prev
+		}
+
+		return message, nil
+	})
 }

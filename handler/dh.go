@@ -1,4 +1,4 @@
-package net
+package handler
 
 import (
 	"bytes"
@@ -109,10 +109,11 @@ type CryptoServer interface {
 }
 
 type _CryptoServer struct {
-	gslogger.Log               // Mixin Log APIs
-	resovler     DHKeyResolver // resolver
-	block        cipher.Block  // cipher block
-	device       *gorpc.Device // client device id
+	gslogger.Log                  // Mixin Log APIs
+	resovler     DHKeyResolver    // resolver
+	block        cipher.Block     // cipher block
+	device       *gorpc.Device    // client device id
+	cached       []*gorpc.Message // cached messages
 }
 
 // NewCryptoServer .
@@ -123,19 +124,32 @@ func NewCryptoServer(resovler DHKeyResolver) gorpc.Handler {
 	}
 }
 
-func (handler *_CryptoServer) OpenHandler(context gorpc.Context) error {
+func (handler *_CryptoServer) Register(context gorpc.Context) error {
+	return nil
+}
+
+func (handler *_CryptoServer) Active(context gorpc.Context) error {
 	return gorpc.ErrSkip
 }
 
-func (handler *_CryptoServer) CloseHandler(context gorpc.Context) {
+func (handler *_CryptoServer) Unregister(context gorpc.Context) {
 
+}
+
+func (handler *_CryptoServer) Inactive(context gorpc.Context) {
+	handler.block = nil
+	handler.cached = nil
 }
 
 func (handler *_CryptoServer) GetDevice() *gorpc.Device {
 	return handler.device
 }
 
-func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
+func (handler *_CryptoServer) MessageReceived(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
+
+	if message.Code == gorpc.CodeHeartbeat {
+		return message, nil
+	}
 
 	if handler.block == nil {
 
@@ -173,7 +187,7 @@ func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.
 
 		message.Content = []byte(dhKey.Exchange().String())
 
-		context.WriteReadPipline(message)
+		context.Send(message)
 
 		key := make([]byte, des.BlockSize)
 
@@ -192,16 +206,22 @@ func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.
 
 		handler.block = block
 
-		handler.I("%s handshake -- success", context.Source())
-
 		handler.device = whoAmI.ID
 
-		return nil, context.Open()
+		context.FireActive()
 
-	}
+		for _, message := range handler.cached {
+			message, _ = handler.MessageSending(context, message)
 
-	if message.Code == gorpc.CodeHeartbeat {
-		return message, nil
+			context.Send(message)
+		}
+
+		handler.cached = nil
+
+		handler.V("%s handshake -- success", context.Name())
+
+		return nil, nil
+
 	}
 
 	blocksize := handler.block.BlockSize()
@@ -223,7 +243,7 @@ func (handler *_CryptoServer) HandleWrite(context gorpc.Context, message *gorpc.
 
 	return message, nil
 }
-func (handler *_CryptoServer) HandleRead(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
+func (handler *_CryptoServer) MessageSending(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
 
 	if handler.block != nil {
 
@@ -244,30 +264,36 @@ func (handler *_CryptoServer) HandleRead(context gorpc.Context, message *gorpc.M
 		message.Content = content
 	}
 
+	handler.cached = append(handler.cached, message)
+
 	return message, nil
 }
 
-func (handler *_CryptoServer) HandleError(context gorpc.Context, err error) error {
-	return err
+func (handler *_CryptoServer) Panic(context gorpc.Context, err error) {
 }
 
 type _CryptoClient struct {
-	gslogger.Log               // Mixin Log APIs
-	dhKey        *DHKey        // crypto dhkey
-	block        cipher.Block  // cipher block
-	device       *gorpc.Device // client device id
+	gslogger.Log                  // Mixin Log APIs
+	dhKey        *DHKey           // crypto dhkey
+	block        cipher.Block     // cipher block
+	device       *gorpc.Device    // client device id
+	cached       []*gorpc.Message // cached messages
 }
 
 // NewCryptoClient .
-func NewCryptoClient(device *gorpc.Device, G, P *big.Int) gorpc.Handler {
+func NewCryptoClient(device *gorpc.Device, dhKey *DHKey) gorpc.Handler {
 	return &_CryptoClient{
 		Log:    gslogger.Get("crpyto-client"),
-		dhKey:  NewDHKey(G, P),
+		dhKey:  dhKey,
 		device: device,
 	}
 }
 
-func (handler *_CryptoClient) OpenHandler(context gorpc.Context) error {
+func (handler *_CryptoClient) Register(context gorpc.Context) error {
+	return nil
+}
+
+func (handler *_CryptoClient) Active(context gorpc.Context) error {
 	// create whoAmI message
 
 	message := gorpc.NewMessage()
@@ -293,17 +319,23 @@ func (handler *_CryptoClient) OpenHandler(context gorpc.Context) error {
 
 	handler.V("send whoAmI handshake")
 
-	context.WriteReadPipline(message)
+	context.Send(message)
 
 	return gorpc.ErrSkip
 
 }
 
-func (handler *_CryptoClient) CloseHandler(context gorpc.Context) {
+func (handler *_CryptoClient) Unregister(context gorpc.Context) {
 
 }
 
-func (handler *_CryptoClient) HandleRead(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
+func (handler *_CryptoClient) Inactive(context gorpc.Context) {
+	handler.block = nil
+	handler.cached = nil
+}
+
+func (handler *_CryptoClient) MessageSending(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
+
 	if handler.block != nil {
 
 		blocksize := handler.block.BlockSize()
@@ -321,18 +353,28 @@ func (handler *_CryptoClient) HandleRead(context gorpc.Context, message *gorpc.M
 		message.Content = content
 
 		handler.V("encrypt message content[blocksize :%d, blocks ：%d]", blocksize, blocks)
+
+		return message, nil
 	}
 
-	return message, nil
+	handler.cached = append(handler.cached, message)
+
+	return nil, nil
 }
 
-func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
+func (handler *_CryptoClient) MessageReceived(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
+
+	if message.Code == gorpc.CodeHeartbeat {
+		return message, nil
+	}
 
 	if handler.block == nil {
 
 		handler.V("expect handshake accept")
 
 		if message.Code != gorpc.CodeAccept {
+
+			handler.E("unexpect message(%s)", message.Code)
 
 			context.Close()
 
@@ -365,9 +407,19 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 
 		handler.block = block
 
-		handler.I("%s handshake -- success", context.Source())
+		handler.V("%s handshake -- success", context.Name())
 
-		return nil, context.Open()
+		context.FireActive()
+
+		for _, message := range handler.cached {
+			message, _ = handler.MessageSending(context, message)
+
+			context.Send(message)
+		}
+
+		handler.cached = nil
+
+		return nil, nil
 	}
 
 	if message.Code == gorpc.CodeHeartbeat {
@@ -394,6 +446,6 @@ func (handler *_CryptoClient) HandleWrite(context gorpc.Context, message *gorpc.
 	return message, nil
 }
 
-func (handler *_CryptoClient) HandleError(context gorpc.Context, err error) error {
-	return err
+func (handler *_CryptoClient) Panic(context gorpc.Context, err error) {
+
 }

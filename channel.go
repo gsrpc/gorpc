@@ -7,13 +7,18 @@ type Future interface {
 
 // Channel .
 type Channel interface {
+	Post(call *Request) error
 	Send(call *Request) (Future, error)
 }
 
 // MessageChannel .
 type MessageChannel interface {
-	Channel
 	SendMessage(message *Message) error
+}
+
+// ClosableChannel .
+type ClosableChannel interface {
+	CloseChannel()
 }
 
 // Send send method
