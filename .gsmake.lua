@@ -4,7 +4,7 @@ plugin "github.com/gsmake/golang"
 plugin "github.com/gsmake/gsrpc"
 
 
-golang = {
+properties.golang = {
     dependencies = {
         { name = "github.com/gsdocker/gsos"     };
         { name = "github.com/gsdocker/gserrors" };
@@ -15,7 +15,7 @@ golang = {
     tests = { "timer","hashring" };
 }
 
-gsrpc = {
+properties.gsrpc = {
     lang = "golang";
     dependencies = {
         { name = "github.com/gsrpc/gslang" };
