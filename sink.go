@@ -14,6 +14,7 @@ type Sink interface {
 	Channel
 	AddService(dispatcher Dispatcher)
 	RemoveService(dispatcher Dispatcher)
+	ClearServices()
 	MessageReceived(message *Message) error
 }
 
@@ -58,6 +59,14 @@ func (sink *_Sink) RemoveService(dispatcher Dispatcher) {
 	if dispatcher, ok := sink.dispatchers[dispatcher.ID()]; ok && dispatcher == dispatcher {
 		delete(sink.dispatchers, dispatcher.ID())
 	}
+}
+
+// ClearServices .
+func (sink *_Sink) ClearServices() {
+	sink.Lock()
+	defer sink.Unlock()
+
+	sink.dispatchers = make(map[uint16]Dispatcher)
 }
 
 func (sink *_Sink) Promise() (Promise, uint32) {
