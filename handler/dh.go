@@ -212,7 +212,6 @@ func (handler *_CryptoServer) MessageReceived(context gorpc.Context, message *go
 
 		for _, message := range handler.cached {
 			message, _ = handler.MessageSending(context, message)
-
 			context.Send(message)
 		}
 
@@ -413,7 +412,6 @@ func (handler *_CryptoClient) MessageReceived(context gorpc.Context, message *go
 
 		for _, message := range handler.cached {
 			message, _ = handler.MessageSending(context, message)
-
 			context.Send(message)
 		}
 

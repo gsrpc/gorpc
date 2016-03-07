@@ -121,7 +121,9 @@ func (w *Wheel) cascade(tv [][]*timer, index int) int {
 	tv[index] = vec[0:0:defaultTimerSize]
 
 	for _, t := range vec {
-		w.addTimerInternal(t)
+		if t != nil {
+			w.addTimerInternal(t)
+		}
 	}
 
 	return index

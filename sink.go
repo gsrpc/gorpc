@@ -27,19 +27,19 @@ type _Sink struct {
 	dispatchers  map[uint16]Dispatcher // register dispatchers
 	promises     map[uint32]Promise    // rpc promise
 	channel      MessageChannel        // channel
-	eventLoop    EventLoop             // event loop
+	pipeline     Pipeline              // pipeline
 }
 
 // NewSink .
-func NewSink(name string, eventLoop EventLoop, channel MessageChannel, timeout time.Duration) Sink {
+func NewSink(name string, pipeline Pipeline, timeout time.Duration) Sink {
 	return &_Sink{
 		Log:         gslogger.Get("sink"),
 		name:        name,
 		timeout:     timeout,
 		dispatchers: make(map[uint16]Dispatcher),
 		promises:    make(map[uint32]Promise),
-		channel:     channel,
-		eventLoop:   eventLoop,
+		channel:     pipeline,
+		pipeline:    pipeline,
 	}
 }
 
@@ -85,7 +85,7 @@ func (sink *_Sink) Promise() (Promise, uint32) {
 			continue
 		}
 
-		promise := NewPromise(sink.eventLoop, sink.timeout, func() {
+		promise := NewPromise(sink.pipeline, sink.timeout, func() {
 			sink.Lock()
 			defer sink.Unlock()
 
@@ -124,6 +124,8 @@ func (sink *_Sink) Post(call *Request) error {
 // Send .
 func (sink *_Sink) Send(call *Request) (Future, error) {
 
+	sink.V("%s send request(%d:%d:%d)", sink.name, call.ID, call.Service, call.Method)
+
 	promise, id := sink.Promise()
 
 	call.ID = id
@@ -150,7 +152,7 @@ func (sink *_Sink) Send(call *Request) (Future, error) {
 		return nil, err
 	}
 
-	sink.V("%s send request(%d:%d:%d)", sink.name, call.ID, call.Service, call.Method)
+	sink.V("%s send request(%d:%d:%d) -- success", sink.name, call.ID, call.Service, call.Method)
 
 	return promise, nil
 }

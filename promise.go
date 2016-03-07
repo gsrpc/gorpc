@@ -21,12 +21,12 @@ type Promise interface {
 }
 
 // NewPromise .
-func NewPromise(eventLoop EventLoop, timeout time.Duration, f func()) Promise {
+func NewPromise(pipeline Pipeline, timeout time.Duration, f func()) Promise {
 	promise := &_Promise{
 		promise: make(chan *Response, 1),
 	}
 
-	promise.timer = eventLoop.After(timeout, func() {
+	promise.timer = pipeline.After(timeout, func() {
 		f()
 		promise.Timeout()
 
@@ -49,11 +49,15 @@ func (promise *_Promise) Notify(callReturn *Response, err error) {
 }
 
 func (promise *_Promise) Timeout() {
+	promise.timer.Stop()
+
 	promise.err = ErrTimeout
 	promise.promise <- nil
 }
 
 func (promise *_Promise) Cancel() {
+	promise.timer.Stop()
+
 	promise.err = ErrCanceled
 	promise.promise <- nil
 }

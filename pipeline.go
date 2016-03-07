@@ -6,6 +6,7 @@ import (
 
 	"github.com/gsdocker/gsconfig"
 	"github.com/gsdocker/gslogger"
+	"github.com/gsrpc/gorpc/timer"
 )
 
 // Pipeline Channel handlers pipeline
@@ -21,8 +22,10 @@ type Pipeline interface {
 	Inactive()
 	// Received .
 	Received(message *Message) error
-	// EventLoop .
-	EventLoop() EventLoop
+	// TimeWheel invoke handle after timeout
+	TimeWheel() *timer.Wheel
+	// After invoke handle after timeout
+	After(timeout time.Duration, f func()) *timer.Timer
 	// Channel implement channel interface
 	Channel
 	// SendMessage .
@@ -41,17 +44,17 @@ type Pipeline interface {
 type PipelineBuilder struct {
 	handlers   []HandlerF    // handler factories
 	names      []string      // handler names
-	executor   EventLoop     // event loop
 	timeout    time.Duration // rpc timeout
 	cachedsize int           // sending cached
+	timewheel  *timer.Wheel  // time wheel
 }
 
 // BuildPipeline creaet new pipeline builder
-func BuildPipeline(executor EventLoop) *PipelineBuilder {
+func BuildPipeline(timerTick time.Duration) *PipelineBuilder {
 	return &PipelineBuilder{
-		executor:   executor,
 		timeout:    gsconfig.Seconds("gorpc.timeout", 5),
 		cachedsize: gsconfig.Int("gorpc.sendQ", 1024),
+		timewheel:  timer.NewWheel(timerTick),
 	}
 }
 
@@ -85,9 +88,9 @@ type _Pipeline struct {
 	name         string                        // pipeline name
 	header       *_Context                     // pipeline head handler
 	tail         *_Context                     //  tail
-	executor     EventLoop                     // event loop
 	closedflag   chan bool                     // pipeline closed flag
 	sendcached   chan func() (*Message, error) // send cache Q
+	timewheel    *timer.Wheel                  // time wheel
 }
 
 // Build create new Pipeline
@@ -96,14 +99,14 @@ func (builder *PipelineBuilder) Build(name string) (Pipeline, error) {
 	pipeline := &_Pipeline{
 		Log:        gslogger.Get("pipeline"),
 		name:       name,
-		executor:   builder.executor,
+		timewheel:  builder.timewheel,
 		sendcached: make(chan func() (*Message, error), builder.cachedsize),
 		closedflag: make(chan bool),
 	}
 
 	close(pipeline.closedflag)
 
-	pipeline.Sink = NewSink(name, builder.executor, pipeline, builder.timeout)
+	pipeline.Sink = NewSink(name, pipeline, builder.timeout)
 
 	var err error
 
@@ -122,8 +125,13 @@ func (builder *PipelineBuilder) Build(name string) (Pipeline, error) {
 	return pipeline, err
 }
 
-func (pipeline *_Pipeline) EventLoop() EventLoop {
-	return pipeline.executor
+// TimeWheel invoke handle after timeout
+func (pipeline *_Pipeline) TimeWheel() *timer.Wheel {
+	return pipeline.timewheel
+}
+
+func (pipeline *_Pipeline) After(timeout time.Duration, f func()) *timer.Timer {
+	return pipeline.timewheel.AfterFunc(timeout, f)
 }
 
 func (pipeline *_Pipeline) String() string {
@@ -206,41 +214,39 @@ func (pipeline *_Pipeline) Inactive() {
 
 func (pipeline *_Pipeline) Received(message *Message) error {
 
-	pipeline.executor.Execute(func() {
-		current := pipeline.header
+	current := pipeline.header
 
-		var err error
+	var err error
 
-		for current != nil {
+	for current != nil {
 
-			message, err = current.onMessageReceived(message)
+		message, err = current.onMessageReceived(message)
 
-			// if has error
-			if err != nil {
+		// if has error
+		if err != nil {
 
-				pipeline.E("handle received message error\n%s", err)
+			pipeline.E("handle received message error\n%s", err)
 
-				return
-			}
-
-			if message == nil {
-				return
-			}
-
-			current = current.next
+			return err
 		}
 
-		if message != nil {
-			err = pipeline.Sink.MessageReceived(message)
-
-			if err != nil {
-
-				pipeline.E("handle received message error\n%s", err)
-
-				return
-			}
+		if message == nil {
+			return nil
 		}
-	})
+
+		current = current.next
+	}
+
+	if message != nil {
+		err = pipeline.Sink.MessageReceived(message)
+
+		if err != nil {
+
+			pipeline.E("handle received message error\n%s", err)
+
+			return err
+		}
+	}
 
 	return nil
 }
@@ -347,6 +353,7 @@ func (pipeline *_Pipeline) onSend(f func() (*Message, error)) error {
 	case pipeline.sendcached <- f:
 		return nil
 	case <-pipeline.closedflag:
+		pipeline.I("!!!!!!!!!!!!!!!!!!!!!")
 		return nil
 	}
 }

@@ -13,7 +13,7 @@ properties.golang = {
         { name = "github.com/gorilla/websocket" };
     };
 
-    tests = { "timer","hashring" };
+    tests = { "test" };
 }
 
 properties.gsrpc = {
