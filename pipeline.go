@@ -159,15 +159,14 @@ func (pipeline *_Pipeline) Handler(name string) (Handler, bool) {
 func (pipeline *_Pipeline) Active() error {
 
 	pipeline.Lock()
+	defer pipeline.Unlock()
 	select {
 	case <-pipeline.closedflag:
 		pipeline.closedflag = make(chan bool)
 	default:
-		pipeline.Unlock()
+
 		return nil
 	}
-
-	pipeline.Unlock()
 
 	current := pipeline.header
 
@@ -191,16 +190,14 @@ func (pipeline *_Pipeline) Active() error {
 func (pipeline *_Pipeline) Inactive() {
 
 	pipeline.Lock()
-
+	defer pipeline.Unlock()
 	select {
 	case <-pipeline.closedflag:
-		pipeline.Unlock()
+
 		return
 	default:
 		close(pipeline.closedflag)
 	}
-
-	pipeline.Unlock()
 
 	current := pipeline.header
 
@@ -213,6 +210,9 @@ func (pipeline *_Pipeline) Inactive() {
 }
 
 func (pipeline *_Pipeline) Received(message *Message) error {
+
+	pipeline.Lock()
+	defer pipeline.Unlock()
 
 	current := pipeline.header
 
@@ -275,6 +275,9 @@ func (pipeline *_Pipeline) Sending() (*Message, error) {
 }
 
 func (pipeline *_Pipeline) fireActive(context *_Context) {
+	pipeline.Lock()
+	defer pipeline.Unlock()
+
 	current := context.next
 
 	for current != nil {
@@ -301,14 +304,13 @@ func (pipeline *_Pipeline) fireActive(context *_Context) {
 func (pipeline *_Pipeline) Close() {
 
 	pipeline.Lock()
+	defer pipeline.Unlock()
 
 	select {
 	case <-pipeline.closedflag:
 	default:
 		close(pipeline.closedflag)
 	}
-
-	pipeline.Unlock()
 
 	current := pipeline.header
 
@@ -327,14 +329,13 @@ func (pipeline *_Pipeline) onClose() {
 
 	go func() {
 		pipeline.Lock()
+		defer pipeline.Unlock()
 
 		select {
 		case <-pipeline.closedflag:
 		default:
 			close(pipeline.closedflag)
 		}
-
-		pipeline.Unlock()
 
 		current := pipeline.header
 
@@ -353,7 +354,6 @@ func (pipeline *_Pipeline) onSend(f func() (*Message, error)) error {
 	case pipeline.sendcached <- f:
 		return nil
 	case <-pipeline.closedflag:
-		pipeline.I("!!!!!!!!!!!!!!!!!!!!!")
 		return nil
 	}
 }
@@ -361,6 +361,9 @@ func (pipeline *_Pipeline) onSend(f func() (*Message, error)) error {
 func (pipeline *_Pipeline) send(context *_Context, message *Message) error {
 
 	return pipeline.onSend(func() (*Message, error) {
+		pipeline.Lock()
+		defer pipeline.Unlock()
+
 		current := context.prev
 
 		var err error
@@ -392,6 +395,9 @@ func (pipeline *_Pipeline) send(context *_Context, message *Message) error {
 func (pipeline *_Pipeline) SendMessage(message *Message) error {
 
 	return pipeline.onSend(func() (*Message, error) {
+		pipeline.Lock()
+		defer pipeline.Unlock()
+
 		current := pipeline.tail
 
 		var err error

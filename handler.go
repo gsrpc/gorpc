@@ -1,8 +1,6 @@
 package gorpc
 
 import (
-	"sync"
-
 	"github.com/gsdocker/gserrors"
 	"github.com/gsdocker/gslogger"
 )
@@ -62,7 +60,6 @@ type HandlerF func() Handler
 
 type _Context struct {
 	gslogger.Log               // mixin log
-	sync.Mutex                 // context mutex
 	name         string        // context bound handler name
 	handler      Handler       // context bound handler
 	shared       SharedHandler // shared handler
@@ -84,9 +81,6 @@ func newContext(name string, handler Handler, pipeline *_Pipeline, prev *_Contex
 
 	context.shared, _ = handler.(SharedHandler)
 
-	context.lock()
-	defer context.unlock()
-
 	err := context.handler.Register(context)
 
 	if err != nil {
@@ -107,22 +101,6 @@ func (context *_Context) Close() {
 	context.pipeline.onClose()
 }
 
-func (context *_Context) lock() {
-	context.Lock()
-
-	if context.shared != nil {
-		context.shared.HandlerLock()
-	}
-}
-
-func (context *_Context) unlock() {
-	context.Unlock()
-
-	if context.shared != nil {
-		context.shared.HandlerUnlock()
-	}
-}
-
 func (context *_Context) Name() string {
 	return context.name
 }
@@ -136,7 +114,7 @@ func (context *_Context) Pipeline() Pipeline {
 }
 
 func (context *_Context) FireActive() {
-	context.pipeline.fireActive(context)
+	go context.pipeline.fireActive(context)
 }
 
 func (context *_Context) Send(message *Message) {
@@ -145,15 +123,12 @@ func (context *_Context) Send(message *Message) {
 }
 
 func (context *_Context) onActive() (err error) {
-	context.lock()
 
 	defer func() {
 
 		if e := recover(); e != nil {
 			err = gserrors.Newf(nil, "catch unhandle error :%s", e)
 		}
-
-		context.unlock()
 	}()
 
 	if context.state != handlerRegister {
@@ -170,21 +145,17 @@ func (context *_Context) onActive() (err error) {
 }
 
 func (context *_Context) onPanic(err error) {
-	context.lock()
 	defer func() {
 
 		if e := recover(); e != nil {
 			err = gserrors.Newf(nil, "catch unhandle error :%s", e)
 		}
-
-		context.unlock()
 	}()
 
 	context.handler.Panic(context, err)
 }
 
 func (context *_Context) onInactive() {
-	context.lock()
 	defer func() {
 
 		if e := recover(); e != nil {
@@ -195,7 +166,6 @@ func (context *_Context) onInactive() {
 			)
 		}
 
-		context.unlock()
 	}()
 
 	if context.state != handlerActived {
@@ -208,7 +178,6 @@ func (context *_Context) onInactive() {
 }
 
 func (context *_Context) onUnregister() {
-	context.lock()
 	defer func() {
 
 		if e := recover(); e != nil {
@@ -218,8 +187,6 @@ func (context *_Context) onUnregister() {
 				gserrors.Newf(nil, "catch unhandle error :%s", e),
 			)
 		}
-
-		context.unlock()
 	}()
 
 	if context.state == handlerUnregister {
@@ -232,14 +199,13 @@ func (context *_Context) onUnregister() {
 }
 
 func (context *_Context) onMessageSending(message *Message) (ret *Message, err error) {
-	context.lock()
+
 	defer func() {
 
 		if e := recover(); e != nil {
 			err = gserrors.Newf(nil, "catch unhandle error :%s", e)
 		}
 
-		context.unlock()
 	}()
 
 	ret, err = context.handler.MessageSending(context, message)
@@ -249,15 +215,11 @@ func (context *_Context) onMessageSending(message *Message) (ret *Message, err e
 
 func (context *_Context) onMessageReceived(message *Message) (ret *Message, err error) {
 
-	context.lock()
-
 	defer func() {
 
 		if e := recover(); e != nil {
 			err = gserrors.Newf(nil, "catch unhandle error :%s", e)
 		}
-
-		context.unlock()
 	}()
 
 	ret, err = context.handler.MessageReceived(context, message)
