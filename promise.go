@@ -21,12 +21,12 @@ type Promise interface {
 }
 
 // NewPromise .
-func NewPromise(pipeline Pipeline, timeout time.Duration, f func()) Promise {
+func NewPromise(timewheel *timer.Wheel, timeout time.Duration, f func()) Promise {
 	promise := &_Promise{
 		promise: make(chan *Response, 1),
 	}
 
-	promise.timer = pipeline.After(timeout, func() {
+	promise.timer = timewheel.AfterFunc(timeout, func() {
 		f()
 		promise.Timeout()
 

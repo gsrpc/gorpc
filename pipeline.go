@@ -106,7 +106,7 @@ func (builder *PipelineBuilder) Build(name string) (Pipeline, error) {
 
 	close(pipeline.closedflag)
 
-	pipeline.Sink = NewSink(name, pipeline, builder.timeout)
+	pipeline.Sink = NewSink(name, pipeline, pipeline.TimeWheel(), builder.timeout)
 
 	var err error
 

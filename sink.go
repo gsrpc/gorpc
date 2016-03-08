@@ -7,6 +7,7 @@ import (
 
 	"github.com/gsdocker/gserrors"
 	"github.com/gsdocker/gslogger"
+	"github.com/gsrpc/gorpc/timer"
 )
 
 // Sink .
@@ -27,19 +28,19 @@ type _Sink struct {
 	dispatchers  map[uint16]Dispatcher // register dispatchers
 	promises     map[uint32]Promise    // rpc promise
 	channel      MessageChannel        // channel
-	pipeline     Pipeline              // pipeline
+	timeWheel    *timer.Wheel          // pipeline
 }
 
 // NewSink .
-func NewSink(name string, pipeline Pipeline, timeout time.Duration) Sink {
+func NewSink(name string, channel MessageChannel, timeWheel *timer.Wheel, timeout time.Duration) Sink {
 	return &_Sink{
 		Log:         gslogger.Get("sink"),
 		name:        name,
 		timeout:     timeout,
 		dispatchers: make(map[uint16]Dispatcher),
 		promises:    make(map[uint32]Promise),
-		channel:     pipeline,
-		pipeline:    pipeline,
+		channel:     channel,
+		timeWheel:   timeWheel,
 	}
 }
 
@@ -85,7 +86,7 @@ func (sink *_Sink) Promise() (Promise, uint32) {
 			continue
 		}
 
-		promise := NewPromise(sink.pipeline, sink.timeout, func() {
+		promise := NewPromise(sink.timeWheel, sink.timeout, func() {
 			sink.Lock()
 			defer sink.Unlock()
 

@@ -55,7 +55,7 @@ type _Client struct {
 // Build create new client
 func (builder *ClientBuilder) Build(name string, F ConnectF) (Client, error) {
 	client := &_Client{
-
+		Log:   gslogger.Get(fmt.Sprintf("%s.%s", builder.name, name)),
 		name:  fmt.Sprintf("%s.%s", builder.name, name),
 		f:     F,
 		state: uint32(StateDisconnect),

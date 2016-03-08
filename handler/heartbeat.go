@@ -63,36 +63,36 @@ func (handler *_HeartbeatHandler) Inactive(context gorpc.Context) {
 
 func (handler *_HeartbeatHandler) timeoutLoop(context gorpc.Context, exitflag chan bool) {
 
-	// wheel := context.Pipeline().TimeWheel()
-	//
-	// ticker := wheel.NewTicker(handler.timeout)
-	//
-	// defer ticker.Stop()
-	//
-	// for {
-	//
-	// 	select {
-	// 	case <-ticker.C:
-	//
-	// 		if time.Now().Sub(handler.timestamp) > handler.timeout*2 {
-	// 			handler.context.Close()
-	// 			handler.W("heartbeat timeout(%s), close current pipeline(%s)", handler.timeout*2, handler.context.Pipeline())
-	// 			return
-	// 		}
-	//
-	// 		message := gorpc.NewMessage()
-	//
-	// 		message.Code = gorpc.CodeHeartbeat
-	//
-	// 		handler.context.Send(message)
-	//
-	// 		handler.V("%s send heartbeat message", handler.context.Pipeline())
-	//
-	// 	case <-exitflag:
-	// 		handler.V("exit heartbeat loop .....................")
-	// 		return
-	// 	}
-	// }
+	wheel := context.Pipeline().TimeWheel()
+
+	ticker := wheel.NewTicker(handler.timeout)
+
+	defer ticker.Stop()
+
+	for {
+
+		select {
+		case <-ticker.C:
+
+			if time.Now().Sub(handler.timestamp) > handler.timeout*2 {
+				handler.context.Close()
+				handler.W("heartbeat timeout(%s), close current pipeline(%s)", handler.timeout*2, handler.context.Pipeline())
+				return
+			}
+
+			message := gorpc.NewMessage()
+
+			message.Code = gorpc.CodeHeartbeat
+
+			handler.context.Send(message)
+
+			handler.V("%s send heartbeat message", handler.context.Pipeline())
+
+		case <-exitflag:
+			handler.V("exit heartbeat loop .....................")
+			return
+		}
+	}
 }
 
 func (handler *_HeartbeatHandler) MessageReceived(context gorpc.Context, message *gorpc.Message) (*gorpc.Message, error) {
