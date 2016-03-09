@@ -132,7 +132,6 @@ func (channel *_Channel) sendLoop() {
 }
 
 func (channel *_Channel) close() {
-	channel.I("%s", gserrors.Newf(nil, ""))
 	if !atomic.CompareAndSwapUint32(&channel.closedflag, 0, 1) {
 		return
 	}
